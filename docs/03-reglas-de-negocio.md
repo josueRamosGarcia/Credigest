@@ -269,7 +269,7 @@ saldo_insoluto = Σ (amount + late_fee − paid_amount) de cuotas no pagadas
 
 ## 8. Comprobantes
 
-**RN-39** — Cada pago aplicado genera un folio legible: `PAGO-{tenant_corto}-{año}-{consecutivo}`.
+**RN-39** — Cada pago aplicado genera un folio legible: `PAGO-{slug o tenant_corto}-{año}-{consecutivo}`. El `slug` es opcional; si no existe, se usa un código corto derivado del nombre o del UUID del tenant.
 **RN-40** — El comprobante incluye: folio, fecha, cliente, préstamo, monto, método, referencia SPEI, desglose aplicado y saldo restante.
 **RN-41** — Un pago anulado conserva su folio pero se marca como ANULADO y no se puede reemitir como vigente.
 

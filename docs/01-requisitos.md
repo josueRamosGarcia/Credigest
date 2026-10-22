@@ -23,7 +23,7 @@ Prioridad: **Must** (imprescindible para el MVP), **Should** (deseable en el MVP
 
 | ID | Requisito | Prioridad | Actor |
 | :--- | :--- | :--- | :--- |
-| RF-01 | El sistema debe permitir iniciar sesión con correo y contraseña, devolviendo un token de acceso (JWT). El correo es único global; el `tenant_slug` es opcional para desambiguar. | Must | Todos |
+| RF-01 | El sistema debe permitir iniciar sesión con correo y contraseña, devolviendo un token de acceso (JWT). El correo es único global y el login no requiere conocer el tenant. | Must | Todos |
 | RF-02 | El sistema debe permitir cerrar sesión e invalidar el token de refresco. | Must | Todos |
 | RF-03 | El Administrador debe poder crear, editar, desactivar y reactivar usuarios. | Must | Administrador |
 | RF-04 | Al crear un usuario se le debe asignar uno de los roles: `admin`, `prestamista` o `cobrador`. | Must | Administrador |

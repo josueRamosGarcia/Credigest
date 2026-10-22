@@ -188,7 +188,7 @@ user 1──N audit_log
 | :--- | :--- | :--- |
 | id | UUID | PK |
 | name | varchar(150) | Nombre de la financiera |
-| slug | varchar(50) | único global; usado para desambiguar el login |
+| slug | varchar(50) | nullable; único cuando existe. Identificador legible para URLs y folios, no se usa en el login |
 | plan | enum(`basico`,`profesional`,`empresarial`) | Límites por plan (ver `RN-68`) |
 | is_active | boolean | |
 | created_at / updated_at | timestamptz | |
@@ -315,7 +315,7 @@ user 1──N audit_log
 | tenant_id | UUID | FK |
 | loan_id | UUID | FK |
 | installment_id | UUID | FK nullable (pago adelantado) |
-| folio | varchar(40) | único por tenant; formato `PAGO-{tenant}-{año}-{consecutivo}` |
+| folio | varchar(40) | único por tenant; formato `PAGO-{slug o tenant_corto}-{año}-{consecutivo}` |
 | amount | numeric(14,2) | monto recibido |
 | method | enum(`efectivo`,`spei`) | |
 | spei_reference | varchar(100) | obligatorio si `spei` |
@@ -450,14 +450,14 @@ Base: `/api/v1`. Autenticación: `Authorization: Bearer <access_token>`.
 
 | Método | Ruta | Descripción |
 | :--- | :--- | :--- |
-| POST | `/auth/login` | Recibe correo, contraseña y `tenant_slug` opcional; devuelve access y refresh token |
+| POST | `/auth/login` | Recibe correo y contraseña; devuelve access y refresh token |
 | POST | `/auth/refresh` | Renueva el access token y rota el refresh |
 | POST | `/auth/logout` | Revoca el refresh token |
 | POST | `/auth/forgot-password` | Envía enlace de recuperación |
 | POST | `/auth/reset-password` | Cambia contraseña con token |
 | GET | `/auth/me` | Datos del usuario autenticado y permisos |
 
-> El correo es único global. `tenant_slug` solo es necesario si el sistema opera con correos repetidos entre tenants; con la regla de unicidad global queda como dato opcional de diagnóstico.
+> El correo es único global, así que el login no necesita conocer el tenant. El `slug` del tenant es opcional y solo sirve como identificador legible en URLs y folios.
 
 ### 6.2 Usuarios y configuración
 
