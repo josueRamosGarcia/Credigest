@@ -26,7 +26,9 @@
 | Migraciones | Alembic | Versionado del esquema de base de datos |
 | Base de datos | PostgreSQL 16 | Transacciones, integridad, índices y soporte de `JSONB` para auditoría |
 | Validación | Pydantic v2 | Esquemas de entrada/salida y validación de CURP, montos y fechas |
-| Autenticación | JWT (access + refresh) con `python-jose` o `pyjwt`; hash con `passlib[bcrypt]` | Sesiones sin estado |
+| Autenticación | JWT (access + refresh) con `python-jose` o `pyjwt`; hash con `passlib[bcrypt]`; refresh tokens persistidos y revocables | Sesiones sin estado con revocación |
+| UI | Tailwind CSS + shadcn/ui | Componentes accesibles y consistentes; interfaz en español |
+| Cierre diario | Job programado (APScheduler o cron + script) | Calcula y persiste mora al cierre del día |
 | PDF | WeasyPrint (HTML→PDF) o ReportLab | Pagarés y comprobantes con plantillas |
 | Archivos | Almacenamiento de objetos compatible con S3 (MinIO en local) | Documentos fuera del servidor web, URLs firmadas |
 | Tareas asíncronas | Celery + Redis, o FastAPI BackgroundTasks en el MVP | Envío de correos y generación de PDFs pesados |
@@ -164,13 +166,17 @@ client 1──N loan
 loan 1──N installment
 loan 1──N payment
 
-installment 1──N installment_payment (N:M resuelto con tabla)
+installment 1──N payment_application (N:M resuelto con tabla)
 payment 1──N payment_application
 
+user 1──N refresh_token
+user 1──N password_reset_token
+user 1──N quote
 user 1──N collection_route
 collection_route 1──N collection_route_item
 collection_route_item N──1 client
 
+tenant 1──N bank
 tenant 1──N audit_log
 user 1──N audit_log
 ```
@@ -182,7 +188,8 @@ user 1──N audit_log
 | :--- | :--- | :--- |
 | id | UUID | PK |
 | name | varchar(150) | Nombre de la financiera |
-| plan | enum(`basico`,`profesional`,`empresarial`) | Límites por plan |
+| slug | varchar(50) | único global; usado para desambiguar el login |
+| plan | enum(`basico`,`profesional`,`empresarial`) | Límites por plan (ver `RN-68`) |
 | is_active | boolean | |
 | created_at / updated_at | timestamptz | |
 
@@ -192,14 +199,35 @@ user 1──N audit_log
 | id | UUID | PK |
 | tenant_id | UUID | FK, obligatorio |
 | full_name | varchar(150) | |
-| email | varchar(255) | único por tenant |
+| email | varchar(255) | único global (no solo por tenant) |
 | phone | varchar(20) | |
 | password_hash | varchar(255) | bcrypt |
 | role | enum(`admin`,`prestamista`,`cobrador`) | |
-| permissions | JSONB | ej. `{"apply_discount": true, "edit_rate": false}` |
+| permissions | JSONB | ej. `{"edit_rate": false, "cancel_payment": true}` |
 | is_active | boolean | |
 | last_login_at | timestamptz | |
 | created_at / updated_at | timestamptz | |
+
+#### `refresh_token`
+| Campo | Tipo | Notas |
+| :--- | :--- | :--- |
+| id | UUID | PK |
+| user_id | UUID | FK |
+| token_hash | varchar(255) | hash del token; nunca el token en claro |
+| expires_at | timestamptz | |
+| revoked_at | timestamptz | nullable |
+| replaced_by | UUID | nullable; rotación de tokens |
+| created_at | timestamptz | |
+
+#### `password_reset_token`
+| Campo | Tipo | Notas |
+| :--- | :--- | :--- |
+| id | UUID | PK |
+| user_id | UUID | FK |
+| token_hash | varchar(255) | |
+| expires_at | timestamptz | |
+| used_at | timestamptz | nullable |
+| created_at | timestamptz | |
 
 #### `client`
 | Campo | Tipo | Notas |
@@ -287,10 +315,11 @@ user 1──N audit_log
 | tenant_id | UUID | FK |
 | loan_id | UUID | FK |
 | installment_id | UUID | FK nullable (pago adelantado) |
+| folio | varchar(40) | único por tenant; formato `PAGO-{tenant}-{año}-{consecutivo}` |
 | amount | numeric(14,2) | monto recibido |
 | method | enum(`efectivo`,`spei`) | |
 | spei_reference | varchar(100) | obligatorio si `spei` |
-| payment_type | enum(`parcial`,`completo`,`adelantado`,`moratorio`) | |
+| payment_type | enum(`parcial`,`completo`,`adelantado`,`moratorio`) | etiqueta descriptiva; la aplicación siempre sigue `RN-29` |
 | status | enum(`aplicado`,`anulado`) | |
 | registered_by | UUID | FK user |
 | cancelled_by | UUID | FK user nullable |
@@ -307,6 +336,49 @@ Distribución de un pago entre cuotas y conceptos (mora, interés, capital).
 | installment_id | UUID | FK |
 | concept | enum(`mora`,`interes`,`capital`) | |
 | amount | numeric(14,2) | |
+
+#### `quote` (cotización en borrador)
+| Campo | Tipo | Notas |
+| :--- | :--- | :--- |
+| id | UUID | PK |
+| tenant_id | UUID | FK |
+| client_id | UUID | FK nullable |
+| created_by | UUID | FK user |
+| principal | numeric(14,2) | |
+| interest_rate | numeric(8,4) | tasa por periodo |
+| rate_period | enum(`semanal`,`quincenal`,`mensual`) | |
+| scheme | enum(`simple`,`saldo_insoluto`,`cuota_fija`) | |
+| term_periods | integer | |
+| snapshot | JSONB | resultado de la simulación (cuotas y totales) |
+| created_at / updated_at | timestamptz | |
+
+> Post-MVP (RF-25). La tabla se define desde el MVP para no migrar después, pero la UI puede omitirla.
+
+#### `bank` (catálogo del comparador)
+| Campo | Tipo | Notas |
+| :--- | :--- | :--- |
+| id | UUID | PK |
+| tenant_id | UUID | FK |
+| name | varchar(150) | |
+| annual_rate | numeric(8,4) | tasa anual de referencia |
+| cat | numeric(8,4) | CAT estimado de referencia |
+| opening_fee | numeric(14,2) | comisión de apertura |
+| is_active | boolean | |
+| updated_at | timestamptz | |
+
+#### `notification` (correos y avisos)
+| Campo | Tipo | Notas |
+| :--- | :--- | :--- |
+| id | UUID | PK |
+| tenant_id | UUID | FK |
+| user_id | UUID | FK nullable |
+| channel | enum(`email`,`whatsapp`) | |
+| template | varchar(80) | |
+| payload | JSONB | sin datos sensibles en claro |
+| status | enum(`pendiente`,`enviado`,`fallido`) | |
+| error | text | nullable |
+| sent_at | timestamptz | nullable |
+| created_at | timestamptz | |
 
 #### `collection_route`
 | Campo | Tipo | Notas |
@@ -327,6 +399,7 @@ Distribución de un pago entre cuotas y conceptos (mora, interés, capital).
 | client_id | UUID | FK |
 | loan_id | UUID | FK |
 | installment_id | UUID | FK |
+| payment_id | UUID | FK nullable; pago registrado desde esta visita |
 | order_index | integer | orden de visita |
 | visit_status | enum(`pendiente`,`pagado`,`no_pagado`) | |
 | notes | text | |
@@ -377,12 +450,14 @@ Base: `/api/v1`. Autenticación: `Authorization: Bearer <access_token>`.
 
 | Método | Ruta | Descripción |
 | :--- | :--- | :--- |
-| POST | `/auth/login` | Devuelve access y refresh token |
-| POST | `/auth/refresh` | Renueva el access token |
+| POST | `/auth/login` | Recibe correo, contraseña y `tenant_slug` opcional; devuelve access y refresh token |
+| POST | `/auth/refresh` | Renueva el access token y rota el refresh |
 | POST | `/auth/logout` | Revoca el refresh token |
 | POST | `/auth/forgot-password` | Envía enlace de recuperación |
 | POST | `/auth/reset-password` | Cambia contraseña con token |
 | GET | `/auth/me` | Datos del usuario autenticado y permisos |
+
+> El correo es único global. `tenant_slug` solo es necesario si el sistema opera con correos repetidos entre tenants; con la regla de unicidad global queda como dato opcional de diagnóstico.
 
 ### 6.2 Usuarios y configuración
 
@@ -392,6 +467,7 @@ Base: `/api/v1`. Autenticación: `Authorization: Bearer <access_token>`.
 | POST | `/users` | admin |
 | PATCH | `/users/{id}` | admin |
 | PATCH | `/users/{id}/status` | admin |
+| POST | `/users/{id}/reset-password` | admin (genera contraseña temporal si falla el correo) |
 | GET | `/settings` | admin |
 | PUT | `/settings` | admin |
 
@@ -400,27 +476,27 @@ Base: `/api/v1`. Autenticación: `Authorization: Bearer <access_token>`.
 | Método | Ruta | Rol |
 | :--- | :--- | :--- |
 | GET | `/clients?search=&zone=&status=&page=` | admin, prestamista |
-| POST | `/clients` | prestamista |
+| POST | `/clients` | admin, prestamista |
 | GET | `/clients/{id}` | admin, prestamista |
-| PATCH | `/clients/{id}` | prestamista |
-| PATCH | `/clients/{id}/status` | prestamista |
-| POST | `/clients/{id}/documents` | prestamista (multipart) |
-| GET | `/clients/{id}/documents/{doc_id}/url` | prestamista (URL firmada) |
-| POST | `/clients/{id}/references` | prestamista |
-| GET | `/clients/{id}/loans` | prestamista |
+| PATCH | `/clients/{id}` | admin, prestamista |
+| PATCH | `/clients/{id}/status` | admin, prestamista |
+| POST | `/clients/{id}/documents` | admin, prestamista (multipart) |
+| GET | `/clients/{id}/documents/{doc_id}/url` | admin, prestamista (URL firmada) |
+| POST | `/clients/{id}/references` | admin, prestamista |
+| GET | `/clients/{id}/loans` | admin, prestamista |
 
 ### 6.4 Préstamos y simulación
 
 | Método | Ruta | Rol |
 | :--- | :--- | :--- |
-| POST | `/loans/simulate` | prestamista |
-| POST | `/loans` | prestamista |
+| POST | `/loans/simulate` | admin, prestamista |
+| POST | `/loans` | admin, prestamista |
 | GET | `/loans?status=&client_id=&page=` | admin, prestamista |
 | GET | `/loans/{id}` | admin, prestamista |
 | GET | `/loans/{id}/schedule` | admin, prestamista |
 | GET | `/loans/{id}/payments` | admin, prestamista |
 | POST | `/loans/{id}/cancel` | admin |
-| GET | `/loans/{id}/pagare.pdf` | prestamista |
+| GET | `/loans/{id}/pagare.pdf` | admin, prestamista |
 
 ### 6.5 Cobranza y pagos
 
@@ -430,7 +506,8 @@ Base: `/api/v1`. Autenticación: `Authorization: Bearer <access_token>`.
 | POST | `/routes` | admin |
 | GET | `/routes/{id}` | cobrador asignado, admin |
 | PATCH | `/routes/{id}/items/{item_id}` | cobrador |
-| POST | `/payments` | cobrador |
+| POST | `/routes/{id}/close` | admin, cobrador asignado |
+| POST | `/payments` | admin, cobrador |
 | GET | `/payments?loan_id=&from=&to=` | admin, prestamista |
 | POST | `/payments/{id}/cancel` | admin, prestamista con permiso |
 | GET | `/payments/{id}/receipt.pdf` | cobrador, admin |
@@ -531,7 +608,7 @@ Formato uniforme:
 | Tema | Implementación |
 | :--- | :--- |
 | Contraseñas | `bcrypt` con coste ≥ 12; política mínima de 10 caracteres |
-| Tokens | Access 15 min, refresh 7 días, rotación y revocación en base |
+| Tokens | Access 15 min, refresh 7 días, rotación y revocación en base (`refresh_token`) |
 | Autorización | RBAC por rol + permisos granulares en `users.permissions` |
 | Aislamiento | Middleware/dependencia inyecta `tenant_id`; repositorios lo aplican siempre |
 | Archivos | Validación MIME y tamaño; nombres aleatorios; URLs firmadas con expiración de 5 min |
@@ -553,9 +630,11 @@ Formato uniforme:
 | Simular y aprobar préstamos | ✅ | ✅ | ❌ |
 | Generar pagaré | ✅ | ✅ | ❌ |
 | Ver rutas asignadas | ✅ | ❌ | ✅ |
-| Registrar pagos | ❌ | ❌ | ✅ |
+| Registrar pagos | ✅ | ❌ | ✅ |
 | Anular pagos | ✅ | ⚠️ con permiso | ❌ |
 | Comparador bancario | ✅ | ✅ | ❌ |
+
+> El Administrador tiene acceso total por definición (`RN-61`); esta matriz describe al Prestamista y al Cobrador. No existen permisos de descuento ni condonación en el MVP.
 
 Las reglas completas están en `03-reglas-de-negocio.md`.
 
@@ -571,9 +650,14 @@ Las reglas completas están en `03-reglas-de-negocio.md`.
   - `apply_payment(loan, installment, amount)`
   - `calculate_late_fee(installment, today, rate, grace_days)`
 - Las fechas se calculan con `dateutil.relativedelta` y zona horaria `America/Mexico_City`.
+- La tasa se interpreta **por periodo** según `rate_period`; las equivalencias mensual/anual se calculan solo para mostrar.
 - Redondeo: `ROUND_HALF_UP` a 2 decimales; el último periodo absorbe el ajuste de centavos para que la suma cuadre exactamente.
 
 > Fórmulas completas en `03-reglas-de-negocio.md`.
+
+### 8.1 Cierre diario de mora
+
+Un job programado (cron a las 23:55 hora de México, o APScheduler dentro del worker) recorre las cuotas vencidas, calcula la mora devengada con `calculate_late_fee` y persiste el acumulado en `installment.late_fee`. Así se cumple `RN-20` sin recalcular todo el historial en cada consulta. El job es idempotente: puede ejecutarse dos veces el mismo día sin duplicar mora (guarda la última fecha de cálculo).
 
 ---
 
@@ -615,8 +699,9 @@ frontend/
 
 - **Estado del servidor:** TanStack Query (caché, reintentos, invalidación).
 - **Formularios:** React Hook Form + Zod.
+- **Estilos:** Tailwind CSS + shadcn/ui, interfaz en español.
 - **Rutas:** React Router con guardas por rol.
-- **PWA:** service worker con Workbox; caché de lectura de la ruta del día y cola de reintento para pagos cuando vuelve la conexión.
+- **PWA:** service worker con Workbox y **caché de solo lectura** de la ruta del día. No hay cola de pagos offline en el MVP: registrar un pago exige conexión para evitar duplicados.
 
 ---
 
@@ -686,3 +771,7 @@ Casos mínimos obligatorios: los tres esquemas de interés, pago parcial, pago a
 | 5 | WeasyPrint para PDF | ReportLab | Plantillas HTML/CSS más fáciles de mantener |
 | 6 | `Decimal` para dinero | `float` | Evitar errores de redondeo |
 | 7 | Auditoría append-only | Logs de aplicación | Requisito legal y de trazabilidad |
+| 8 | Correo único global | Email único por tenant | El login no requiere conocer el tenant y evita ambigüedad |
+| 9 | PWA solo con caché de lectura | Cola de pagos offline | Evita pagos duplicados sin clave de idempotencia |
+| 10 | Límites de plan fijos, sin add-ons | Cobro por usuario extra | Menos complejidad en el MVP |
+| 11 | Tailwind + shadcn/ui | MUI, Bootstrap | Componentes accesibles y control total del diseño |

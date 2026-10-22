@@ -11,7 +11,7 @@
 | **RN-01** | Todo importe monetario se representa con `Decimal` en Python y `numeric(14,2)` en PostgreSQL. Nunca `float`. |
 | **RN-02** | El redondeo es `ROUND_HALF_UP` a 2 decimales. |
 | **RN-03** | En una tabla de amortización, el último periodo absorbe la diferencia de centavos para que la suma de capital sea exactamente igual al monto prestado y la suma de cuotas sea exactamente el total. |
-| **RN-04** | Las tasas se guardan como fracción decimal por periodo (5 % → `0.05`), no como porcentaje. |
+| **RN-04** | Las tasas se guardan como fracción decimal **por periodo** (5 % → `0.05`) según la frecuencia del préstamo (`rate_period`). Las equivalencias mensual o anual son solo informativas y no se usan para el cálculo. |
 | **RN-05** | Las fechas se manejan en zona `America/Mexico_City`. Las fechas de vencimiento son tipo `date`, sin hora. |
 | **RN-06** | Los cálculos financieros del préstamo se congelan al aprobarlo. Cambiar parámetros globales después **no** modifica préstamos existentes. |
 
@@ -188,7 +188,7 @@ mora = saldo_vencido × late_fee_rate × (días_mora_efectivos / 30)
 
 Donde `saldo_vencido` es el monto pendiente de la cuota (cuota − pagado), sin incluir mora ya generada.
 
-**RN-20** — La mora se calcula al momento de consultar o de registrar un pago, no se persiste como cargo diario. Se guarda el acumulado en `installment.late_fee` cuando se aplica un pago o se cierra el día.
+**RN-20** — La mora se devenga por día, pero no se persiste como cargo diario independiente. Se calcula al consultar o al registrar un pago, y se consolida en `installment.late_fee` mediante el **cierre diario** programado (23:55, hora de México) definido en `02-arquitectura.md` §8.1. El job es idempotente y guarda la fecha del último cálculo para no duplicar mora.
 
 **RN-21** — La mora no genera interés compuesto sobre sí misma en el MVP.
 
@@ -212,13 +212,13 @@ mora = 1,000 × 0.10 × (5 / 30) = 16.67
 | **RN-23** | El monto debe ser `> 0`. |
 | **RN-24** | El monto no puede exceder el saldo total pendiente (capital + interés + mora) del préstamo. Si excede, se rechaza con 400. |
 | **RN-25** | Si el método es `spei`, la referencia es obligatoria (mínimo 6 caracteres). |
-| **RN-26** | El cobrador solo puede registrar pagos de clientes incluidos en sus rutas asignadas. |
+| **RN-26** | El cobrador solo puede registrar pagos de clientes incluidos en sus rutas asignadas. El Administrador puede registrar pagos de cualquier cliente del tenant. |
 | **RN-27** | No se permite registrar pagos sobre un préstamo `cancelado` o `pagado`. |
 | **RN-28** | Un pago idéntico (mismo préstamo, monto, fecha y usuario) dentro de 60 segundos se considera duplicado y se advierte. |
 
 ### 7.2 Orden de aplicación
 
-**RN-29** — Todo pago se distribuye en este orden estricto:
+**RN-29** — Todo pago se distribuye en este orden estricto, sin importar el `payment_type` (que es solo una etiqueta descriptiva):
 
 ```
 1. Mora acumulada de cuotas vencidas (la más antigua primero)
@@ -232,7 +232,7 @@ mora = 1,000 × 0.10 × (5 / 30) = 16.67
 
 **RN-31** — El pago puede cubrir varias cuotas; no se obliga a que sea exacto.
 
-**RN-32** — Los pagos no se aplican a "capital puro" sin cubrir interés y mora, salvo que el Prestamista con permiso registre una condonación explícita (post-MVP).
+**RN-32** — Los pagos no se aplican a "capital puro" sin cubrir interés y mora. Las condonaciones y descuentos quedan fuera del MVP; cuando se implementen, requerirán un registro contable separado.
 
 ### 7.3 Estados resultantes
 
@@ -256,10 +256,11 @@ saldo_insoluto = Σ (amount + late_fee − paid_amount) de cuotas no pagadas
 ### 7.4 Anulación de pago
 
 **RN-36** — Anular un pago:
-1. Marca `payment.status = anulado`, guarda `cancelled_by`, `cancel_reason` y fecha.
-2. Revierte cada `payment_application` restando el monto de la cuota correspondiente.
-3. Recalcula estados de cuotas y del préstamo.
-4. Registra auditoría `payment.cancel` con el estado antes y después.
+1. Valida que no existan pagos posteriores aplicados al mismo préstamo. Si existen, se rechaza con 409 indicando que deben anularse primero los más recientes.
+2. Marca `payment.status = anulado`, guarda `cancelled_by`, `cancel_reason` y fecha.
+3. Revierte cada `payment_application` restando el monto de la cuota correspondiente.
+4. Recalcula estados de cuotas y del préstamo.
+5. Registra auditoría `payment.cancel` con el estado antes y después.
 
 **RN-37** — Solo el Administrador o un Prestamista con permiso `cancel_payment` pueden anular. El Cobrador nunca.
 **RN-38** — No se puede anular un pago si el préstamo ya está `pagado` y el pago es el que lo cerró, salvo autorización del Administrador con motivo.
@@ -295,7 +296,7 @@ saldo_insoluto = Σ (amount + late_fee − paid_amount) de cuotas no pagadas
 | Capital proyectado | `Σ saldo de capital pendiente` de préstamos activos/vencidos |
 | Intereses generados | `Σ payment_application.amount` con `concept = interes` |
 | Mora cobrada | `Σ payment_application.amount` con `concept = mora` |
-| Utilidad generada | Intereses generados + mora cobrada − condonaciones |
+| Utilidad generada | Intereses generados + mora cobrada |
 | Índice de morosidad | `cartera_vencida / cartera_total × 100` |
 | Cartera vencida | `Σ saldo pendiente` de cuotas vencidas |
 
@@ -362,13 +363,12 @@ CAT_estimado = ((1 + tasa_mensual)^12 − 1) × 100 + comisiones_anualizadas
 | `create_client` | ✅ | ✅ | ❌ |
 | `edit_client` | ✅ | ✅ | ❌ |
 | `create_loan` | ✅ | ✅ | ❌ |
-| `apply_discount` | ✅ | ❌ | ❌ |
 | `edit_rate` | ✅ | ❌ | ❌ |
 | `cancel_payment` | ✅ | ❌ | ❌ |
-| `register_payment` | ❌ | ❌ | ✅ |
+| `register_payment` | ✅ | ❌ | ✅ |
 | `view_assigned_routes` | ✅ | ❌ | ✅ |
 
-**RN-61** — El rol define el conjunto máximo de acciones; los permisos granulares solo pueden restringir, nunca ampliar más allá del rol. El Administrador es la única excepción y siempre tiene todo.
+**RN-61** — El rol define el conjunto máximo de acciones; los permisos granulares solo pueden restringir, nunca ampliar más allá del rol. **El Administrador siempre tiene todas las acciones**, incluido registrar pagos y crear clientes, sin importar la matriz.
 **RN-62** — Un usuario no puede desactivarse a sí mismo ni quitarse el rol `admin` si es el último administrador activo del tenant.
 **RN-63** — Cambiar permisos aplica en el siguiente inicio de sesión o al refrescar el token.
 
@@ -390,15 +390,17 @@ CAT_estimado = ((1 + tasa_mensual)^12 − 1) × 100 + comisiones_anualizadas
 
 | Límite | Básico | Profesional | Empresarial |
 | :--- | ---: | ---: | ---: |
+| Usuarios | 5 | 12 | 30 |
 | Clientes activos | 50 | 200 | Ilimitado |
-| Usuarios | 1 | 3 | 10 |
 | Dashboard | ❌ | ✅ | ✅ |
 | Rutas de cobro | ❌ | ✅ | ✅ |
 | Comparador bancario | ❌ | ❌ | ✅ |
-| Almacenamiento de documentos | 1 GB | 10 GB | 50 GB |
+| Almacenamiento de documentos | 2 GB | 15 GB | 60 GB |
 
-**RN-68** — Al alcanzar el límite de clientes o usuarios, el sistema bloquea nuevas altas con un mensaje que invita a subir de plan.
+**RN-68** — Al alcanzar el límite de clientes o usuarios, el sistema bloquea nuevas altas con un mensaje que invita a subir de plan. Los límites son fijos por plan en el MVP; no existen usuarios extra ni add-ons.
 **RN-69** — Los datos existentes no se eliminan si el tenant baja de plan; solo se bloquean nuevas altas por encima del límite.
+
+**RN-70** — Anonimización de datos personales: a solicitud del titular, se reemplazan nombre, CURP, teléfono, dirección y referencias por valores seudónimos, y se eliminan los documentos. La bitácora de auditoría se conserva con identificadores internos (UUID) y sin datos personales, conforme a la obligación de conservación (`RN-67`). La anonimización se registra en auditoría como `client.anonymize`.
 
 ---
 
@@ -444,4 +446,4 @@ aplicado ──(anulación con permiso)──▶ anulado
 | RN-55 a RN-60 | Clientes | CURP, unicidad y borrado lógico |
 | RN-61 a RN-63 | Permisos | Rol y granularidad |
 | RN-64 a RN-67 | Auditoría | Eventos e inmutabilidad |
-| RN-68 a RN-69 | Planes | Límites |
+| RN-68 a RN-70 | Planes y privacidad | Límites fijos y anonimización |

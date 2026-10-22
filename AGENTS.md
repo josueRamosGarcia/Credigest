@@ -18,9 +18,10 @@ Roles: Administrador, Prestamista, Cobrador. Documentación completa en `/docs`.
 
 **Frontend**
 - React + TypeScript + Vite
+- Tailwind CSS + shadcn/ui (interfaz en español)
 - TanStack Query para estado del servidor
 - React Hook Form + Zod para formularios
-- PWA responsive para el cobrador (misma base React)
+- PWA responsive para el cobrador (misma base React), con caché de solo lectura
 - Pruebas con Vitest + Testing Library
 
 ## Reglas de negocio críticas

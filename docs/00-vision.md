@@ -96,11 +96,11 @@ Trabaja en campo. Necesita una lista clara y ordenada de a quién cobrar, cuánt
 
 Suscripciones mensuales y anuales con estructura escalonada por número de clientes y usuarios:
 
-| Plan | Precio mensual | Precio anual | Incluye |
-| :--- | ---: | ---: | :--- |
-| Básico | $149 MXN | $1,490 MXN | Hasta 50 clientes, simulador, pagarés, registro de pagos |
-| Profesional | $299 MXN | $2,990 MXN | Hasta 200 clientes, dashboard, rutas de cobro, SPEI |
-| Empresarial | $599 MXN | $5,990 MXN | 10 usuarios, clientes ilimitados, comparador bancario, soporte prioritario |
+| Plan | Precio mensual | Precio anual | Usuarios | Clientes | Documentos | Incluye |
+| :--- | ---: | ---: | ---: | ---: | ---: | :--- |
+| Básico | $149 MXN | $1,490 MXN | 5 | 50 | 2 GB | Simulador, pagarés, registro de pagos |
+| Profesional | $299 MXN | $2,990 MXN | 12 | 200 | 15 GB | Dashboard, rutas de cobro, SPEI |
+| Empresarial | $599 MXN | $5,990 MXN | 30 | Ilimitado | 60 GB | Comparador bancario y soporte prioritario |
 
 **Meta financiera año 1:** 50 suscriptores activos, MRR de $15,000 MXN, punto de equilibrio entre el mes 8 y 10.
 
@@ -118,13 +118,16 @@ Suscripciones mensuales y anuales con estructura escalonada por número de clien
 - Registro de pagos (efectivo/SPEI) con pagos parciales y adelantados.
 - Rutas de cobro filtradas por zona y fecha.
 - Dashboard financiero con indicadores básicos.
+- Comparador bancario con catálogo estático y leyenda de estimación (alcance mínimo).
 - Auditoría de operaciones.
-- PWA responsive para el cobrador.
+- PWA responsive para el cobrador con caché de lectura (sin cola de pagos offline).
 
 ### 8.2 Fuera del alcance inicial (post-MVP)
 - App móvil nativa (iOS/Android) publicada en tiendas.
 - Integración bancaria real vía API SPEI (el MVP registra referencias manualmente).
 - Firma electrónica avanzada del pagaré.
+- Descuentos y condonaciones de intereses o mora.
+- Cobro adicional por usuarios extra (add-ons); en el MVP los límites son fijos por plan.
 - Facturación (CFDI) y cobro automático de suscripciones.
 - Scoring crediticio con buró de crédito.
 - Reportería avanzada y BI externo.

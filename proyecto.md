@@ -178,15 +178,15 @@ El modelo de negocio se basa en suscripciones recurrentes con opciones de pago m
 
 **Plan Básico**
 Precio: $149 MXN/mes o $1,490 MXN/año (2 meses gratis)
-Incluye: Hasta 50 clientes, simulador de préstamos, generación de pagarés y registro de pagos.
+Incluye: 5 usuarios, hasta 50 clientes, 2 GB de documentos, simulador de préstamos, generación de pagarés y registro de pagos.
 
 **Plan Profesional**
 Precio: $299 MXN/mes o $2,990 MXN/año (2 meses gratis)
-Incluye: Hasta 200 clientes, dashboard financiero, rutas de cobro e integración con SPEI.
+Incluye: 12 usuarios, hasta 200 clientes, 15 GB de documentos, dashboard financiero, rutas de cobro e integración con SPEI.
 
 **Plan Empresarial**
 Precio: $599 MXN/mes o $5,990 MXN/año (2 meses gratis)
-Incluye: 10 usuarios, clientes ilimitados, comparador de préstamos bancarios y soporte prioritario.
+Incluye: 30 usuarios, clientes ilimitados, 60 GB de documentos, comparador de préstamos bancarios y soporte prioritario.
 
 ## 6. PLAN DE MARKETING Y VENTAS
 

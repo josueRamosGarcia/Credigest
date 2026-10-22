@@ -23,14 +23,15 @@ Prioridad: **Must** (imprescindible para el MVP), **Should** (deseable en el MVP
 
 | ID | Requisito | Prioridad | Actor |
 | :--- | :--- | :--- | :--- |
-| RF-01 | El sistema debe permitir iniciar sesión con correo y contraseña, devolviendo un token de acceso (JWT). | Must | Todos |
+| RF-01 | El sistema debe permitir iniciar sesión con correo y contraseña, devolviendo un token de acceso (JWT). El correo es único global; el `tenant_slug` es opcional para desambiguar. | Must | Todos |
 | RF-02 | El sistema debe permitir cerrar sesión e invalidar el token de refresco. | Must | Todos |
 | RF-03 | El Administrador debe poder crear, editar, desactivar y reactivar usuarios. | Must | Administrador |
 | RF-04 | Al crear un usuario se le debe asignar uno de los roles: `admin`, `prestamista` o `cobrador`. | Must | Administrador |
-| RF-05 | El Administrador debe poder definir permisos granulares por usuario (aplicar descuentos, modificar tasas, anular pagos). | Should | Administrador |
-| RF-06 | El sistema debe enviar las credenciales iniciales al nuevo usuario por correo electrónico. | Should | Sistema |
+| RF-05 | El Administrador debe poder definir permisos granulares por usuario (modificar tasas, anular pagos). Los descuentos y condonaciones quedan fuera del MVP. | Should | Administrador |
+| RF-06 | El sistema debe enviar las credenciales iniciales al nuevo usuario por correo electrónico. Si el envío falla, el Administrador debe poder definir una contraseña temporal. | Should | Sistema |
 | RF-07 | El usuario debe poder cambiar su contraseña y recuperarla mediante correo. | Must | Todos |
 | RF-08 | Toda creación, modificación o desactivación de usuario debe registrarse en la bitácora de auditoría. | Must | Sistema |
+| RF-52 | El sistema debe permitir crear un tenant (financiera) y su primer administrador mediante seed o proceso manual; no existe autorregistro en el MVP. | Must | Sistema |
 
 ### 2.2 Parámetros del sistema
 
@@ -52,7 +53,7 @@ Prioridad: **Must** (imprescindible para el MVP), **Should** (deseable en el MVP
 | RF-17 | El sistema debe mostrar el historial de préstamos del cliente. | Must | Prestamista |
 | RF-18 | El sistema debe permitir buscar y filtrar clientes por nombre, CURP, teléfono y estado. | Must | Prestamista |
 | RF-19 | El sistema debe permitir editar los datos de un cliente, dejando rastro en auditoría. | Must | Prestamista |
-| RF-20 | El sistema no debe permitir eliminar clientes con préstamos activos; solo desactivarlos. | Must | Sistema |
+| RF-20 | El sistema no debe permitir eliminar clientes con historial de préstamos (activos, vencidos o pagados); solo desactivarlos. | Must | Sistema |
 
 ### 2.4 Simulación y cotización
 
@@ -60,7 +61,7 @@ Prioridad: **Must** (imprescindible para el MVP), **Should** (deseable en el MVP
 | :--- | :--- | :--- | :--- |
 | RF-21 | El sistema debe simular préstamos con frecuencia semanal, quincenal y mensual. | Must | Prestamista |
 | RF-22 | El sistema debe soportar tres esquemas: interés simple sobre capital original, interés sobre saldo insoluto y cuota fija precalculada. | Must | Prestamista |
-| RF-23 | La simulación debe devolver cuota periódica, interés total, ganancia estimada, importe total y fecha tentativa de término. | Must | Prestamista |
+| RF-23 | La simulación debe devolver cuota periódica, interés total, ganancia estimada, importe total y fecha tentativa de término. La tasa se captura por periodo (según la frecuencia) y las equivalencias mensual/anual son solo informativas. | Must | Prestamista |
 | RF-24 | La simulación no debe persistir datos; solo al aprobar se crea el préstamo. | Must | Sistema |
 | RF-25 | El Prestamista debe poder guardar una cotización como borrador y recuperarla después. | Could | Prestamista |
 | RF-26 | El Prestamista debe poder aprobar una simulación y convertirla en préstamo activo con su tabla de amortización. | Must | Prestamista |
@@ -96,13 +97,13 @@ Prioridad: **Must** (imprescindible para el MVP), **Should** (deseable en el MVP
 | RF-41 | El dashboard debe mostrar capital total prestado, capital recuperado, capital proyectado, intereses generados, utilidad e índice de morosidad. | Must | Administrador |
 | RF-42 | El dashboard debe permitir filtrar por rango de fechas, prestamista y ruta de cobro. | Must | Administrador |
 | RF-43 | El dashboard debe mostrar la cartera vencida separada por rangos de atraso (1–30, 31–60, 61–90, +90 días). | Should | Administrador |
-| RF-44 | El dashboard debe permitir exportar la información a CSV o Excel. | Should | Administrador |
+| RF-44 | El dashboard debe permitir exportar la información a CSV (formato único del MVP). | Should | Administrador |
 
 ### 2.8 Análisis comparativo bancario
 
 | ID | Requisito | Prioridad | Actor |
 | :--- | :--- | :--- | :--- |
-| RF-45 | El Prestamista debe poder comparar las condiciones de su préstamo contra instituciones bancarias de un catálogo. | Should | Prestamista |
+| RF-45 | El Prestamista debe poder comparar las condiciones de su préstamo contra instituciones bancarias de un catálogo estático configurable por el Administrador (alcance mínimo del MVP). | Should | Prestamista |
 | RF-46 | La comparación debe mostrar tasa, CAT estimado, cuota, comisiones y costo total del crédito. | Should | Prestamista |
 | RF-47 | El sistema debe aclarar que los resultados son estimaciones informativas y no ofertas vinculantes. | Must | Sistema |
 
@@ -172,7 +173,7 @@ Prioridad: **Must** (imprescindible para el MVP), **Should** (deseable en el MVP
 
 | ID | Requisito |
 | :--- | :--- |
-| RNF-25 | El sistema debe permitir eliminar o anonimizar datos personales a solicitud del titular, salvo obligaciones de conservación. |
+| RNF-25 | El sistema debe permitir anonimizar los datos personales del cliente a solicitud del titular. La bitácora de auditoría se conserva con identificadores internos y sin datos personales, conforme a la obligación de conservación. |
 | RNF-26 | Debe mostrarse un aviso de privacidad y recabarse consentimiento para el tratamiento de datos. |
 | RNF-27 | Los documentos generados deben indicar que son un apoyo y no sustituyen asesoría legal. |
 
@@ -336,10 +337,10 @@ Escenario: No se puede modificar la bitácora
   Y el registro debe permanecer intacto
 ```
 
-### RF-20 — Cliente con préstamo activo
+### RF-20 — Cliente con historial de préstamos
 ```gherkin
-Escenario: No eliminar cliente con préstamo activo
-  Dado un cliente con al menos un préstamo en estado "activo"
+Escenario: No eliminar cliente con historial
+  Dado un cliente con al menos un préstamo activo, vencido o pagado
   Cuando el prestamista intenta eliminarlo
   Entonces el sistema debe rechazar la operación
   Y ofrecer la opción de desactivarlo
@@ -351,7 +352,7 @@ Escenario: No eliminar cliente con préstamo activo
 
 | Historia de `proyecto.md` | Casos de uso | Requisitos |
 | :--- | :--- | :--- |
-| HU-1.1 Configuración y usuarios | CU-02 | RF-03 a RF-12 |
+| HU-1.1 Configuración y usuarios | CU-02 | RF-03 a RF-12, RF-52 |
 | HU-1.2 Dashboard y auditoría | CU-08 | RF-41 a RF-51 |
 | HU-2.1 Registro de cliente | CU-03 | RF-13 a RF-20 |
 | HU-2.2 Cotización y pagaré | CU-04, CU-05 | RF-21 a RF-30 |

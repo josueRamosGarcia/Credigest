@@ -63,16 +63,16 @@ Objetivo: cálculos financieros correctos y probados antes de construir pantalla
 
 | Entregable | Responsable | Criterio de terminado |
 | :--- | :--- | :--- |
-| Modelo `tenant`, `user`, `system_setting` | Líder | Migraciones y seeds |
-| Login, refresh, logout, recuperación | Líder | Tokens con expiración y revocación |
+| Modelo `tenant`, `user`, `system_setting` | Líder | Migraciones y seeds; creación de tenant y primer admin por seed |
+| Login, refresh, logout, recuperación | Líder | Tokens con expiración y revocación persistida |
 | RBAC y permisos granulares | Líder | Matriz de `03-reglas-de-negocio.md` aplicada |
-| CRUD de usuarios y parámetros | Líder | Solo admin; auditado |
+| CRUD de usuarios y parámetros | Líder | Solo admin; contraseña temporal si falla el correo |
 | Modelo `client`, documentos y referencias | Líder | CURP validada y única por tenant |
 | Pantallas de login, usuarios y configuración | Frontend | Guardas por rol |
 | CRUD de clientes con carga de archivos | Frontend | Validación de tamaño y tipo |
 | Pruebas de permisos y aislamiento por tenant | QA | Ningún acceso cruzado posible |
 
-**Hito M2 (fin de semana 10):** un prestamista puede registrarse, entrar y dar de alta clientes con documentos.
+**Hito M2 (fin de semana 10):** un administrador crea usuarios y un prestamista entra y da de alta clientes con documentos.
 
 ### Fase 3 — Préstamos y documentos (Semanas 11–14)
 
@@ -110,10 +110,12 @@ Objetivo: cálculos financieros correctos y probados antes de construir pantalla
 | Endpoints de dashboard y aging | Líder | Indicadores según `RN-47` |
 | Exportación CSV | Líder | Archivo válido y filtrado |
 | Bitácora append-only y consulta | Líder | Sin endpoints de modificación |
-| Comparador bancario | Líder | Tabla con CAT estimado y leyenda |
+| Comparador bancario (catálogo estático) | Líder | Tabla con CAT estimado y leyenda |
 | Pantallas de dashboard y auditoría | Frontend | Gráficas y filtros |
 | Pantalla de comparador | Frontend | Exportable |
 | Pruebas de indicadores con datos controlados | QA | Resultados verificados a mano |
+
+> **Decisión de fase 4:** si al terminar la fase 4 el avance es menor al 80 % de lo planeado, el comparador bancario se pospone a post-MVP y la fase 5 se concentra en dashboard y auditoría.
 
 **Hito M5 (fin de semana 22):** el administrador ve su operación completa y puede auditar movimientos.
 
@@ -149,16 +151,19 @@ Objetivo: cálculos financieros correctos y probados antes de construir pantalla
 ## 5. Priorización del alcance (MoSCoW)
 
 ### Must (MVP)
-- RF-01 a RF-04, RF-07 a RF-24, RF-26 a RF-29, RF-31 a RF-32, RF-34 a RF-36, RF-38, RF-41 a RF-42, RF-48 a RF-50.
+- RF-01 a RF-04, RF-07 a RF-24, RF-26 a RF-30, RF-31 a RF-32, RF-34 a RF-36, RF-38, RF-41 a RF-42, RF-48 a RF-50, RF-52.
 - RNF-05 a RNF-12, RNF-17 a RNF-23.
 
 ### Should
-- RF-05, RF-06, RF-25, RF-30, RF-33, RF-37, RF-39, RF-40, RF-43 a RF-47, RF-51.
+- RF-05, RF-06, RF-25, RF-33, RF-37, RF-39, RF-40, RF-43 a RF-47, RF-51.
 - RNF-13 a RNF-16, RNF-24 a RNF-27.
+
+> El comparador bancario (RF-45 a RF-47) se mantiene como *Should* con catálogo estático; al final de la fase 4 el equipo decide si entra al MVP o se pospone. El comprobante de pago (RF-30) pasa a *Must* porque es parte del cierre de la cobranza.
 
 ### Could (post-MVP)
 - Guardar cotizaciones como borrador.
 - Exportación avanzada y reportes programados.
+- Descuentos y condonaciones.
 - Firma electrónica del pagaré.
 - Integración real con API SPEI.
 - App nativa en tiendas.
