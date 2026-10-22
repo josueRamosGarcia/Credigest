@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     environment: str = "local"
     debug: bool = False
 
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/credigest"
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/credigest"
     timezone: str = "America/Mexico_City"
 
 
