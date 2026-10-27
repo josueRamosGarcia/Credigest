@@ -56,6 +56,25 @@ uv run alembic revision --autogenerate -m "descripcion"      # crear
 uv run alembic downgrade -1                                  # revertir una
 ```
 
+## Crear una financiera y su administrador
+
+No hay autorregistro: cada financiera se crea con un script idempotente.
+
+```bash
+uv run python -m app.scripts.seed_tenant \
+  --name "Mi Financiera" \
+  --slug mi-financiera \
+  --admin-name "Nombre Completo" \
+  --admin-email admin@mifinanciera.mx \
+  --admin-password "una-clave-de-al-menos-10"
+```
+
+La contraseña también se puede pasar por la variable `SEED_ADMIN_PASSWORD`
+para no dejarla en el historial del shell.
+
+> Crea el tenant, su configuración global (10 % de mora, 5 días de gracia) y un
+> usuario `admin`. Falla de forma limpia si el slug o el correo ya existen.
+
 ## Solución de problemas
 
 ### El navegador no abre `http://localhost:8000` (WSL2)
