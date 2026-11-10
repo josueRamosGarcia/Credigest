@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Pagaré {{ loan.folio }}</title>
+  <style>
+    @page {
+      size: Letter;
+      margin: 18mm 16mm 16mm 16mm;
+      @bottom-center {
+        content: "Página " counter(page) " de " counter(pages);
+        font-size: 7.5pt;
+        color: #666;
+      }
+      @bottom-right {
+        content: "{{ loan.folio }}";
+        font-size: 7.5pt;
+        color: #666;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: "DejaVu Sans", Arial, sans-serif;
+      font-size: 9pt;
+      line-height: 1.35;
+      color: #111;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 15pt;
+      text-align: center;
+      letter-spacing: 1.5px;
+      margin: 0 0 2mm 0;
+      text-transform: uppercase;
+    }
+
+    .subtitle {
+      text-align: center;
+      font-size: 8pt;
+      color: #555;
+      margin-bottom: 4mm;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 7.5pt;
+      color: #444;
+      border-bottom: 0.6pt solid #999;
+      padding-bottom: 1.5mm;
+      margin-bottom: 3mm;
+    }
+
+    .header div { max-width: 48%; }
+
+    h2 {
+      font-size: 9.5pt;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      border-bottom: 0.5pt solid #ccc;
+      padding-bottom: 1mm;
+      margin: 4mm 0 2mm 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 2mm;
+    }
+
+    .data td {
+      padding: 0.9mm 1.5mm;
+      vertical-align: top;
+    }
+
+    .data td.label {
+      width: 30%;
+      color: #555;
+      font-weight: 600;
+    }
+
+    .amount {
+      font-size: 10.5pt;
+      font-weight: bold;
+      text-align: center;
+      border: 0.8pt solid #333;
+      padding: 2mm;
+      margin: 2mm 0 3mm 0;
+      background: #f7f7f7;
+    }
+
+    .words {
+      font-size: 8pt;
+      font-style: italic;
+      text-align: center;
+      color: #333;
+      margin-bottom: 3mm;
+    }
+
+    .schedule {
+      font-size: 7pt;
+      width: 100%;
+    }
+
+    .schedule th {
+      background: #e8e8e8;
+      border: 0.4pt solid #bbb;
+      padding: 0.7mm 0.4mm;
+      font-size: 6.8pt;
+      text-transform: uppercase;
+      letter-spacing: 0.2px;
+    }
+
+    .schedule td {
+      border: 0.4pt solid #ddd;
+      padding: 0.55mm 0.4mm;
+      text-align: right;
+    }
+
+    .schedule td.num { text-align: center; }
+    .schedule td.date { text-align: center; }
+    .schedule tr:nth-child(even) td { background: #fafafa; }
+    .schedule tr.total td {
+      font-weight: bold;
+      background: #eee;
+      border-top: 0.8pt solid #999;
+    }
+
+    .clauses {
+      font-size: 7.5pt;
+      text-align: justify;
+      margin-top: 2mm;
+    }
+
+    .clauses ol {
+      margin: 0;
+      padding-left: 4mm;
+    }
+
+    .clauses li { margin-bottom: 1.4mm; }
+
+    .signatures {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 12mm;
+      page-break-inside: avoid;
+    }
+
+    .signature {
+      width: 45%;
+      text-align: center;
+      font-size: 7.5pt;
+    }
+
+    .signature .line {
+      border-top: 0.6pt solid #333;
+      margin-bottom: 1.5mm;
+      height: 14mm;
+    }
+
+    .legal {
+      font-size: 6.5pt;
+      color: #777;
+      text-align: center;
+      margin-top: 6mm;
+      border-top: 0.4pt solid #ddd;
+      padding-top: 2mm;
+    }
+
+    .page-break { page-break-before: always; }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <strong>{{ tenant.name }}</strong><br />
+    {% if tenant.slug %}Registro interno: {{ tenant.slug }}{% endif %}
+  </div>
+  <div style="text-align: right;">
+    Folio: <strong>{{ loan.folio }}</strong><br />
+    Emitido: {{ issued_date }}
+  </div>
+</div>
+
+<h1>Pagaré</h1>
+<div class="subtitle">Documento de obligación de pago</div>
+
+<div class="amount">
+  {{ loan.total_amount_words }} M.N.
+  <br />
+  <span style="font-size: 12pt;">$ {{ loan.total_amount }}</span>
+</div>
+
+<h2>Datos del deudor</h2>
+<table class="data">
+  <tr>
+    <td class="label">Nombre completo</td>
+    <td>{{ client.full_name }}</td>
+  </tr>
+  <tr>
+    <td class="label">CURP</td>
+    <td>{{ client.curp }}</td>
+  </tr>
+  <tr>
+    <td class="label">Teléfono</td>
+    <td>{{ client.phone }}</td>
+  </tr>
+  <tr>
+    <td class="label">Domicilio</td>
+    <td>{{ client.address }}</td>
+  </tr>
+</table>
+
+<h2>Condiciones del crédito</h2>
+<table class="data">
+  <tr>
+    <td class="label">Capital prestado</td>
+    <td>$ {{ loan.principal }}</td>
+  </tr>
+  <tr>
+    <td class="label">Tasa de interés</td>
+    <td>{{ loan.interest_rate_percent }} % {{ loan.rate_period_label }}</td>
+  </tr>
+  <tr>
+    <td class="label">Esquema de cálculo</td>
+    <td>{{ loan.scheme_label }}</td>
+  </tr>
+  <tr>
+    <td class="label">Número de pagos</td>
+    <td>{{ loan.term_periods }} {{ loan.installment_label }}</td>
+  </tr>
+  <tr>
+    <td class="label">Fecha de inicio</td>
+    <td>{{ loan.start_date }}</td>
+  </tr>
+  <tr>
+    <td class="label">Primer vencimiento</td>
+    <td>{{ loan.first_due_date }}</td>
+  </tr>
+  <tr>
+    <td class="label">Fecha de término</td>
+    <td>{{ loan.end_date }}</td>
+  </tr>
+  <tr>
+    <td class="label">Interés total</td>
+    <td>$ {{ loan.total_interest }}</td>
+  </tr>
+  <tr>
+    <td class="label">Importe total a pagar</td>
+    <td><strong>$ {{ loan.total_amount }}</strong></td>
+  </tr>
+</table>
+
+<h2>Tabla de amortización</h2>
+<table class="schedule">
+  <thead>
+    <tr>
+      <th style="width: 6%;">No.</th>
+      <th style="width: 14%;">Vencimiento</th>
+      <th style="width: 14%;">Cuota</th>
+      <th style="width: 13%;">Interés</th>
+      <th style="width: 13%;">Capital</th>
+      <th style="width: 15%;">Saldo insoluto</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in installments %}
+    <tr>
+      <td class="num">{{ row.number }}</td>
+      <td class="date">{{ row.due_date }}</td>
+      <td>{{ row.amount }}</td>
+      <td>{{ row.interest_part }}</td>
+      <td>{{ row.principal_part }}</td>
+      <td>{{ row.balance }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total">
+      <td colspan="2">Totales</td>
+      <td>{{ totals.amount }}</td>
+      <td>{{ totals.interest }}</td>
+      <td>{{ totals.principal }}</td>
+      <td>0.00</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Cláusulas</h2>
+<div class="clauses">
+  <ol>
+    <li>
+      El deudor se obliga a pagar a <strong>{{ tenant.name }}</strong> la cantidad total de
+      <strong>$ {{ loan.total_amount }}</strong> ({{ loan.total_amount_words }}), en
+      {{ loan.term_periods }} pagos {{ loan.rate_period_label }} de acuerdo con la tabla de
+      amortización anterior.
+    </li>
+    <li>
+      El pago deberá realizarse en la fecha de vencimiento indicada para cada cuota. Los pagos
+      podrán hacerse en efectivo o mediante transferencia bancaria (SPEI), entregando el
+      comprobante correspondiente.
+    </li>
+    <li>
+      En caso de atraso, se aplicará un interés moratorio del
+      <strong>{{ loan.late_fee_rate_percent }} % mensual</strong> sobre el saldo vencido,
+      prorrateado por día sobre una base de 30 días.
+      {% if loan.grace_days > 0 %}
+      Se otorgan <strong>{{ loan.grace_days }} días de gracia</strong> contados a partir de la
+      fecha de vencimiento antes de que comience a generarse el recargo.
+      {% endif %}
+    </li>
+    <li>
+      En caso de pago anticipado, el deudor podrá liquidar el saldo insoluto en cualquier
+      momento, cubriendo el capital y los intereses devengados a la fecha del pago.
+    </li>
+    <li>
+      El deudor reconoce que el presente documento constituye una obligación exigible y se
+      compromete a cubrir los gastos de cobranza que se generen por el incumplimiento.
+    </li>
+    <li>
+      Para cualquier controversia derivada del presente pagaré, las partes se someten a la
+      jurisdicción de los tribunales competentes del domicilio de la parte acreedora.
+    </li>
+  </ol>
+</div>
+
+<div class="signatures">
+  <div class="signature">
+    <div class="line"></div>
+    <strong>{{ client.full_name }}</strong><br />
+    Deudor<br />
+    CURP: {{ client.curp }}
+  </div>
+  <div class="signature">
+    <div class="line"></div>
+    <strong>{{ tenant.name }}</strong><br />
+    Acreedor
+  </div>
+</div>
+
+<div class="legal">
+  Este documento fue generado electrónicamente por Credigest el {{ issued_date }}.
+  Es un apoyo administrativo y no sustituye la asesoría de un profesional del derecho.
+</div>
+
+</body>
+</html>

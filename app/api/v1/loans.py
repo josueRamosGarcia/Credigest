@@ -7,7 +7,8 @@ requiere autenticacion y filtra por el tenant del usuario.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUserDep, require_role
@@ -25,6 +26,14 @@ from app.domain.interest import (
     total_amount,
     total_interest,
 )
+from app.models.client import Client
+from app.pdf.generator import (
+    MissingDependencyError,
+    PdfError,
+    build_context,
+    pagare_filename,
+    render_pagare_pdf,
+)
 from app.schemas.loan import (
     LoanCancelRequest,
     LoanCreate,
@@ -35,7 +44,7 @@ from app.schemas.loan import (
     SimulateRequest,
     SimulateResponse,
 )
-from app.services import loan_service
+from app.services import audit_service, loan_service
 
 router = APIRouter(prefix="/loans", tags=["prestamos"])
 
@@ -275,6 +284,76 @@ async def get_schedule(
         )
         for row in schedule
     ]
+
+
+@router.get(
+    "/{loan_id}/pagare.pdf",
+    summary="Descargar el pagaré",
+    description=(
+        "Genera el pagaré en PDF con los datos del cliente, las condiciones del "
+        "préstamo, la cláusula de mora y la tabla de amortización completa."
+    ),
+    response_class=Response,
+)
+async def download_pagare(
+    loan_id: UUID,
+    context: CurrentUserDep,
+    session: SessionDep,
+) -> Response:
+    """Devuelve el pagaré listo para imprimir.
+
+    Raises:
+        HTTPException: 404 si el préstamo no existe; 503 si el generador de PDF
+            no está disponible en el servidor.
+    """
+    try:
+        loan = await loan_service.get_loan(session, context.tenant_id, loan_id)
+    except loan_service.LoanNotFoundError as exc:
+        raise _not_found(str(exc)) from exc
+
+    client = await session.scalar(select(Client).where(Client.id == loan.client_id))
+    if client is None:
+        raise _not_found("El cliente del préstamo ya no existe.")
+
+    try:
+        pdf_context = build_context(
+            tenant=context.tenant,
+            client=client,
+            loan=loan,
+        )
+        content = render_pagare_pdf(pdf_context)
+    except MissingDependencyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except PdfError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+
+    await audit_service.record(
+        session,
+        tenant_id=context.tenant_id,
+        user_id=context.user.id,
+        action="loan.pagare_download",
+        entity="loan",
+        entity_id=loan.id,
+        after={"folio": pdf_context.loan["folio"]},
+        commit=True,
+    )
+
+    filename = pagare_filename(context.tenant, loan)
+
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(content)),
+        },
+    )
 
 
 @router.post(
