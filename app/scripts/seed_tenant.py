@@ -60,6 +60,9 @@ async def seed_tenant(
     if len(admin_password) < 10:
         raise SeedError("La contrasena debe tener al menos 10 caracteres.")
 
+    if "@" not in admin_email or "." not in admin_email.split("@")[-1]:
+        raise SeedError(f"El correo '{admin_email}' no tiene un formato valido.")
+
     async with SessionLocal() as session:
         existing_tenant = await session.scalar(select(Tenant).where(Tenant.slug == slug))
         if existing_tenant is not None:
@@ -127,14 +130,31 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
-        tenant, admin = asyncio.run(
-            seed_tenant(
-                name=args.name,
-                slug=args.slug,
-                admin_name=args.admin_name,
-                admin_email=args.admin_email,
-                admin_password=password,
-            )
+        return asyncio.run(run_cli(args, password))
+    except SeedError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+
+async def run_cli(args: argparse.Namespace, password: str) -> int:
+    """Version asincrona de la logica del CLI.
+
+    Se separa de `main` para poder probarla sin crear un event loop nuevo.
+
+    Args:
+        args: Argumentos ya parseados.
+        password: Contrasena validada.
+
+    Returns:
+        El codigo de salida del proceso.
+    """
+    try:
+        tenant, admin = await seed_tenant(
+            name=args.name,
+            slug=args.slug,
+            admin_name=args.admin_name,
+            admin_email=args.admin_email,
+            admin_password=password,
         )
     except SeedError as exc:
         print(f"Error: {exc}", file=sys.stderr)

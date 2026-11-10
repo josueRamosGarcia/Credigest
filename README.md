@@ -75,6 +75,29 @@ para no dejarla en el historial del shell.
 > Crea el tenant, su configuración global (10 % de mora, 5 días de gracia) y un
 > usuario `admin`. Falla de forma limpia si el slug o el correo ya existen.
 
+## Autenticación
+
+Todas las rutas salvo `/health`, `/docs` y `POST /api/v1/loans/simulate`
+requieren la cabecera `Authorization: Bearer <access_token>`.
+
+| Método | Ruta | Para qué |
+| :--- | :--- | :--- |
+| POST | `/api/v1/auth/login` | Correo y contraseña → par de tokens |
+| POST | `/api/v1/auth/refresh` | Canjea el refresh por un par nuevo (rota el anterior) |
+| POST | `/api/v1/auth/logout` | Revoca el refresh indicado |
+| GET | `/api/v1/auth/me` | Perfil, rol, permisos y datos de la financiera |
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@demo.mx","password":"clave-segura-123"}'
+```
+
+- **Access token:** 15 minutos. Viaja en cada petición.
+- **Refresh token:** 7 días. Se guarda hasheado en la base y se rota en cada uso.
+  Reutilizar uno revocado cierra todas las sesiones del usuario.
+- El token solo contiene identificadores: nunca nombre, correo ni CURP.
+
 ## Solución de problemas
 
 ### El navegador no abre `http://localhost:8000` (WSL2)
