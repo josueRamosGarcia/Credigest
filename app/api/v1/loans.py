@@ -1,12 +1,17 @@
-"""Endpoint del cotizador rapido de prestamos.
+"""Endpoints de prestamos.
 
-Este modulo solo valida, delega en el dominio y formatea. Ningun calculo vive
-aqui: la logica esta en `app.domain.interest` y `app.domain.amortization`.
+La simulacion es publica: es una calculadora y no expone datos. Todo lo demas
+requiere autenticacion y filtra por el tenant del usuario.
 """
 
+from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.deps import CurrentUserDep, require_role
+from app.db.session import get_session
 from app.domain.amortization import build_schedule
 from app.domain.interest import (
     Frequency,
@@ -19,9 +24,27 @@ from app.domain.interest import (
     total_amount,
     total_interest,
 )
-from app.schemas.loan import ScheduleRow, SimulateRequest, SimulateResponse
+from app.schemas.loan import (
+    LoanCancelRequest,
+    LoanCreate,
+    LoanDetail,
+    LoanListResponse,
+    LoanRead,
+    ScheduleRow,
+    SimulateRequest,
+    SimulateResponse,
+)
+from app.services import loan_service
 
 router = APIRouter(prefix="/loans", tags=["prestamos"])
+
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+LenderDep = Annotated[object, Depends(require_role("prestamista"))]
+
+
+def _not_found(message: str) -> HTTPException:
+    """Error uniforme de recurso inexistente."""
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
 
 
 def _parse_frequency(raw: str) -> Frequency:
@@ -105,3 +128,176 @@ async def simulate(payload: SimulateRequest) -> SimulateResponse:
             for row in schedule
         ],
     )
+
+
+@router.get(
+    "",
+    response_model=LoanListResponse,
+    summary="Listar prestamos",
+    description="Devuelve los prestamos de la financiera del usuario.",
+)
+async def list_loans(
+    context: CurrentUserDep,
+    session: SessionDep,
+    loan_status: Annotated[
+        str | None,
+        Query(alias="status", pattern="^(activo|pagado|vencido|cancelado)$"),
+    ] = None,
+    client_id: Annotated[UUID | None, Query()] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
+    page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+) -> LoanListResponse:
+    """Lista los prestamos con paginacion."""
+    items, total = await loan_service.list_loans(
+        session,
+        context.tenant_id,
+        status=loan_status,
+        client_id=client_id,
+        page=page,
+        page_size=page_size,
+    )
+
+    return LoanListResponse(
+        items=[LoanRead.model_validate(loan) for loan in items],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.post(
+    "",
+    response_model=LoanDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Aprobar un prestamo",
+    description=(
+        "Convierte una simulacion en un prestamo real: congela las condiciones y "
+        "genera el calendario de cuotas. Requiere rol de prestamista o admin."
+    ),
+)
+async def create_loan(
+    payload: LoanCreate,
+    context: CurrentUserDep,
+    session: SessionDep,
+) -> LoanDetail:
+    """Aprueba un prestamo y devuelve su calendario.
+
+    Raises:
+        HTTPException: 404 si el cliente no existe; 409 si esta inactivo o tiene
+            atrasos graves.
+    """
+    try:
+        loan = await loan_service.create_loan(
+            session, context.tenant_id, context.user.id, payload
+        )
+    except loan_service.ClientNotFoundForLoanError as exc:
+        raise _not_found(str(exc)) from exc
+    except loan_service.InactiveClientError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    except loan_service.ClientHasOverdueDebtError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
+    return LoanDetail.model_validate(loan)
+
+
+@router.get(
+    "/{loan_id}",
+    response_model=LoanDetail,
+    summary="Consultar un prestamo",
+)
+async def get_loan(
+    loan_id: UUID,
+    context: CurrentUserDep,
+    session: SessionDep,
+) -> LoanDetail:
+    """Devuelve un prestamo con su calendario.
+
+    Raises:
+        HTTPException: 404 si no existe o es de otra financiera.
+    """
+    try:
+        loan = await loan_service.get_loan_detail(session, context.tenant_id, loan_id)
+    except loan_service.LoanNotFoundError as exc:
+        raise _not_found(str(exc)) from exc
+
+    return LoanDetail.model_validate(loan)
+
+
+@router.get(
+    "/{loan_id}/schedule",
+    response_model=list[ScheduleRow],
+    summary="Consultar el calendario de cuotas",
+)
+async def get_schedule(
+    loan_id: UUID,
+    context: CurrentUserDep,
+    session: SessionDep,
+) -> list[ScheduleRow]:
+    """Devuelve el calendario con los saldos calculados.
+
+    El saldo no se guarda en cada cuota: se recalcula desde las condiciones
+    congeladas del prestamo, que son inmutables.
+    """
+    try:
+        loan = await loan_service.get_loan(session, context.tenant_id, loan_id)
+    except loan_service.LoanNotFoundError as exc:
+        raise _not_found(str(exc)) from exc
+
+    terms = LoanTerms.create(
+        principal=loan.principal,
+        rate=loan.interest_rate,
+        periods=loan.term_periods,
+        frequency=Frequency(loan.rate_period),
+        scheme=Scheme(loan.scheme),
+    )
+    schedule = build_schedule(terms, loan.start_date)
+
+    return [
+        ScheduleRow(
+            number=row.number,
+            due_date=row.due_date,
+            amount=row.amount,
+            interest_part=row.interest_part,
+            principal_part=row.principal_part,
+            balance=row.balance,
+        )
+        for row in schedule
+    ]
+
+
+@router.post(
+    "/{loan_id}/cancel",
+    response_model=LoanRead,
+    summary="Cancelar un prestamo",
+    description=(
+        "Marca el prestamo como cancelado conservando su historico. "
+        "Solo el Administrador puede hacerlo."
+    ),
+)
+async def cancel_loan(
+    loan_id: UUID,
+    payload: LoanCancelRequest,
+    context: CurrentUserDep,
+    session: SessionDep,
+) -> LoanRead:
+    """Cancela un prestamo con un motivo.
+
+    Raises:
+        HTTPException: 404 si no existe; 409 si ya esta pagado o cancelado.
+    """
+    try:
+        loan = await loan_service.cancel_loan(
+            session, context.tenant_id, loan_id, payload.reason
+        )
+    except loan_service.LoanNotFoundError as exc:
+        raise _not_found(str(exc)) from exc
+    except loan_service.LoanNotCancellableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+
+    return LoanRead.model_validate(loan)
