@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 
 from app.api.v1.auth import router as auth_router
+from app.api.v1.clients import router as clients_router
 from app.api.v1.loans import router as loans_router
 from app.core.config import get_settings
 
@@ -15,6 +16,7 @@ app = FastAPI(
 )
 
 app.include_router(auth_router, prefix="/api/v1")
+app.include_router(clients_router, prefix="/api/v1")
 app.include_router(loans_router, prefix="/api/v1")
 
 
