@@ -17,6 +17,7 @@ Reglas cubiertas:
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -31,6 +32,7 @@ from app.domain.payment_application import (
     breakdown_by_concept,
     total_pending,
 )
+from app.models.collection_route import CollectionRouteItem
 from app.models.loan import Installment, Loan
 from app.models.payment import Payment, PaymentApplication
 from app.models.tenant import Tenant
@@ -238,6 +240,9 @@ async def register_payment(
             installment.paid_at = datetime.now(UTC)
 
     loan.status = _loan_status(loan, business_date)
+
+    # RN-46: si alguna cuota quedo liquidada, marcarla en su ruta activa.
+    await _mark_route_items_paid(session, loan, allocation, payment.id)
 
     await audit_service.record(
         session,
@@ -454,3 +459,41 @@ async def cancel_payment(
         covered_interest=Decimal("0.00"),
         covered_principal=Decimal("0.00"),
     )
+
+
+
+async def _mark_route_items_paid(
+    session: AsyncSession,
+    loan: Loan,
+    allocation: Any,
+    payment_id: UUID,
+) -> None:
+    """Marca como pagadas las paradas de ruta con cuotas liquidadas (RN-46).
+
+    Solo aplica a cuotas completamente pagadas: una parada con pago parcial
+    sigue pendiente en la ruta del cobrador. Se filtra por las cuotas de este
+    prestamo, nunca por numero de cuota, para no tocar otros prestamos.
+    """
+    paid_numbers = {
+        number for number, state in allocation.new_states.items() if state.is_paid
+    }
+    if not paid_numbers:
+        return
+
+    paid_installment_ids = {
+        installment.id
+        for installment in loan.installments
+        if installment.number in paid_numbers
+    }
+    if not paid_installment_ids:
+        return
+
+    route_items = await session.scalars(
+        select(CollectionRouteItem).where(
+            CollectionRouteItem.installment_id.in_(paid_installment_ids)
+        )
+    )
+
+    for item in route_items:
+        item.visit_status = "pagado"
+        item.payment_id = payment_id

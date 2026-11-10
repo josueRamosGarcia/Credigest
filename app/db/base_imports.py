@@ -6,6 +6,7 @@ Sin este import, `alembic revision --autogenerate` genera migraciones vacias.
 
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.client import Client, ClientDocument, ClientReference  # noqa: F401
+from app.models.collection_route import CollectionRoute, CollectionRouteItem  # noqa: F401
 from app.models.loan import Installment, Loan  # noqa: F401
 from app.models.payment import Payment, PaymentApplication  # noqa: F401
 from app.models.refresh_token import RefreshToken  # noqa: F401
@@ -18,6 +19,8 @@ __all__ = [
     "Client",
     "ClientDocument",
     "ClientReference",
+    "CollectionRoute",
+    "CollectionRouteItem",
     "Installment",
     "Loan",
     "Payment",
