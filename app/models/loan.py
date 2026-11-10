@@ -15,6 +15,7 @@ Estados (docs/03-reglas-de-negocio.md, seccion 16)::
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
@@ -32,6 +33,9 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+
+if TYPE_CHECKING:
+    from app.models.payment import PaymentApplication
 
 
 class Loan(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -164,6 +168,11 @@ class Installment(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     late_fee_calculated_on: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     loan: Mapped[Loan] = relationship(back_populates="installments")
+
+    applications: Mapped[list["PaymentApplication"]] = relationship(
+        back_populates="installment",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def pending_amount(self) -> Decimal:
