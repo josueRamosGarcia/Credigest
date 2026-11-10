@@ -15,6 +15,55 @@ SaaS de gestión de préstamos para prestamistas independientes y pequeñas fina
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/)
 - PostgreSQL 16 (para desarrollo local, vía Docker)
+- Librerías del sistema para generar PDF (ver abajo)
+
+### Librerías del sistema para PDF
+
+La generación del pagaré usa **WeasyPrint**, que necesita librerías nativas que no
+vienen con Python. Sin ellas, el endpoint del pagaré responde `503`.
+
+**Ubuntu / Debian / WSL2:**
+
+```bash
+sudo apt update
+sudo apt install -y \
+  libpango-1.0-0 \
+  libpangoft2-1.0-0 \
+  libcairo2 \
+  libgdk-pixbuf-2.0-0 \
+  fonts-dejavu-core \
+  shared-mime-info
+```
+
+**Fedora:**
+
+```bash
+sudo dnf install -y pango cairo gdk-pixbuf2 dejavu-sans-fonts shared-mime-info
+```
+
+**macOS (Homebrew):**
+
+```bash
+brew install pango cairo gdk-pixbuf libffi
+```
+
+**Arch:**
+
+```bash
+sudo pacman -S pango cairo gdk-pixbuf2 ttf-dejavu shared-mime-info
+```
+
+Verificar que quedaron instaladas:
+
+```bash
+uv run python -c "import weasyprint; print(weasyprint.__version__)"
+```
+
+Si imprime un número de versión, todo está listo. Si muestra un error sobre
+`libgobject`, falta alguna de las librerías de arriba.
+
+> El endpoint del pagaré no se cae si faltan: responde `503` con el comando exacto
+> que hay que ejecutar. El resto de la API funciona con normalidad.
 
 ## Puesta en marcha
 
@@ -97,6 +146,38 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 - **Refresh token:** 7 días. Se guarda hasheado en la base y se rota en cada uso.
   Reutilizar uno revocado cierra todas las sesiones del usuario.
 - El token solo contiene identificadores: nunca nombre, correo ni CURP.
+
+### Límite de intentos de inicio de sesión
+
+El login acepta **5 intentos por minuto por IP**. Al superarlos responde `429` con
+la cabecera `Retry-After`. El contador vive en memoria del proceso; si más adelante
+se corre con varios workers, conviene moverlo a Redis.
+
+## Módulos de la API
+
+| Módulo | Rutas base | Para qué |
+| :--- | :--- | :--- |
+| Autenticación | `/api/v1/auth` | Login, refresh, logout y perfil |
+| Clientes | `/api/v1/clients` | Alta, edición, referencias y documentos |
+| Préstamos | `/api/v1/loans` | Simulación, aprobación, calendario y pagaré |
+| Pagos | `/api/v1/payments` | Registro, consulta y anulación |
+| Rutas de cobro | `/api/v1/routes` | Armado diario por zona y fecha |
+| Dashboard | `/api/v1/dashboard` | Indicadores, aging y cobranza diaria |
+| Auditoría | `/api/v1/audit` | Consulta y exportación de la bitácora |
+
+La documentación interactiva con todos los esquemas está en `/docs`.
+
+## Generar el pagaré
+
+```bash
+curl -X GET http://localhost:8000/api/v1/loans/<id>/pagare.pdf \
+  -H "Authorization: Bearer <access_token>" \
+  --output pagare.pdf
+```
+
+El documento incluye los datos del deudor, las condiciones del crédito, la tabla de
+amortización completa, las cláusulas de mora y el espacio para firmas. Con 60 cuotas
+ocupa aproximadamente 3 páginas.
 
 ## Solución de problemas
 
