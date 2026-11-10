@@ -34,6 +34,7 @@ from app.models.client import Client
 from app.models.loan import Installment, Loan
 from app.models.system_setting import SystemSetting
 from app.schemas.loan import LoanCreate
+from app.services import audit_service
 
 #: Dias de atraso a partir de los cuales se bloquea un prestamo nuevo (RN-16).
 BLOCKING_OVERDUE_DAYS = 90
@@ -123,6 +124,9 @@ async def create_loan(
     tenant_id: UUID,
     lender_id: UUID,
     payload: LoanCreate,
+    *,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> Loan:
     """Aprueba un prestamo y genera su calendario.
 
@@ -213,6 +217,26 @@ async def create_loan(
             )
         )
 
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=lender_id,
+        action="loan.create",
+        entity="loan",
+        entity_id=loan.id,
+        after={
+            "client_id": str(client.id),
+            "principal": str(loan.principal),
+            "interest_rate": str(loan.interest_rate),
+            "scheme": loan.scheme,
+            "term_periods": loan.term_periods,
+            "total_amount": str(loan.total_amount),
+            "status": loan.status,
+        },
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
     await session.commit()
     return await get_loan_detail(session, tenant_id, loan.id)
 
@@ -250,7 +274,14 @@ async def list_loans(
 
 
 async def cancel_loan(
-    session: AsyncSession, tenant_id: UUID, loan_id: UUID, reason: str
+    session: AsyncSession,
+    tenant_id: UUID,
+    loan_id: UUID,
+    reason: str,
+    *,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> Loan:
     """Cancela un prestamo en estado activo o vencido.
 
@@ -267,8 +298,23 @@ async def cancel_loan(
             f"Un prestamo en estado '{loan.status}' no puede cancelarse."
         )
 
+    previous = loan.status
     loan.status = "cancelado"
     loan.cancel_reason = reason
+
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=actor_id,
+        action="loan.cancel",
+        entity="loan",
+        entity_id=loan.id,
+        before={"status": previous},
+        after={"status": "cancelado", "reason": reason},
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
     await session.commit()
     return loan
 

@@ -7,10 +7,11 @@ requiere autenticacion y filtra por el tenant del usuario.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUserDep, require_role
+from app.core.request_meta import request_meta
 from app.db.session import get_session
 from app.domain.amortization import build_schedule
 from app.domain.interest import (
@@ -179,6 +180,7 @@ async def create_loan(
     payload: LoanCreate,
     context: CurrentUserDep,
     session: SessionDep,
+    request: Request,
 ) -> LoanDetail:
     """Aprueba un prestamo y devuelve su calendario.
 
@@ -187,8 +189,14 @@ async def create_loan(
             atrasos graves.
     """
     try:
+        meta = request_meta(request)
         loan = await loan_service.create_loan(
-            session, context.tenant_id, context.user.id, payload
+            session,
+            context.tenant_id,
+            context.user.id,
+            payload,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
         )
     except loan_service.ClientNotFoundForLoanError as exc:
         raise _not_found(str(exc)) from exc
@@ -283,6 +291,7 @@ async def cancel_loan(
     payload: LoanCancelRequest,
     context: CurrentUserDep,
     session: SessionDep,
+    request: Request,
 ) -> LoanRead:
     """Cancela un prestamo con un motivo.
 
@@ -290,8 +299,15 @@ async def cancel_loan(
         HTTPException: 404 si no existe; 409 si ya esta pagado o cancelado.
     """
     try:
+        meta = request_meta(request)
         loan = await loan_service.cancel_loan(
-            session, context.tenant_id, loan_id, payload.reason
+            session,
+            context.tenant_id,
+            loan_id,
+            payload.reason,
+            actor_id=context.user.id,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
         )
     except loan_service.LoanNotFoundError as exc:
         raise _not_found(str(exc)) from exc

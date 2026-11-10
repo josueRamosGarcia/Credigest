@@ -9,10 +9,11 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import AuthContext, CurrentUserDep, get_current_user
+from app.core.request_meta import request_meta
 from app.db.session import get_session
 from app.schemas.payment import (
     PaymentCancelRequest,
@@ -53,6 +54,7 @@ async def register_payment(
     payload: PaymentCreate,
     context: CurrentUserDep,
     session: SessionDep,
+    request: Request,
 ) -> PaymentResult:
     """Registra un abono y devuelve el desglose.
 
@@ -61,8 +63,14 @@ async def register_payment(
             el monto excede el saldo.
     """
     try:
+        meta = request_meta(request)
         outcome = await payment_service.register_payment(
-            session, context.tenant_id, context.user.id, payload
+            session,
+            context.tenant_id,
+            context.user.id,
+            payload,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
         )
     except payment_service.LoanNotPayableError as exc:
         raise _conflict(str(exc)) from exc
@@ -152,6 +160,7 @@ async def cancel_payment(
     payload: PaymentCancelRequest,
     context: Annotated[AuthContext, Depends(get_current_user)],
     session: SessionDep,
+    request: Request,
 ) -> PaymentResult:
     """Anula un pago con un motivo.
 
@@ -166,8 +175,15 @@ async def cancel_payment(
         )
 
     try:
+        meta = request_meta(request)
         outcome = await payment_service.cancel_payment(
-            session, context.tenant_id, payment_id, context.user.id, payload.reason
+            session,
+            context.tenant_id,
+            payment_id,
+            context.user.id,
+            payload.reason,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
         )
     except payment_service.PaymentNotFoundError as exc:
         raise _not_found(str(exc)) from exc

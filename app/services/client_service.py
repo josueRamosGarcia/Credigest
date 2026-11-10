@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.domain.validation import parse_curp
 from app.models.client import Client, ClientDocument, ClientReference
 from app.schemas.client import ClientCreate, ClientUpdate
+from app.services import audit_service
 
 #: Tamano maximo de pagina para evitar consultas gigantes.
 MAX_PAGE_SIZE = 100
@@ -129,6 +130,9 @@ async def create_client(
     tenant_id: UUID,
     created_by: UUID,
     payload: ClientCreate,
+    *,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> Client:
     """Registra un cliente nuevo.
 
@@ -175,6 +179,24 @@ async def create_client(
             )
         )
 
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=created_by,
+        action="client.create",
+        entity="client",
+        entity_id=client.id,
+        after={
+            "full_name": client.full_name,
+            "curp": client.curp,
+            "phone": client.phone,
+            "zone": client.zone,
+            "status": client.status,
+        },
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
     await session.commit()
     return await get_client_detail(session, tenant_id, client.id)
 
@@ -184,6 +206,10 @@ async def update_client(
     tenant_id: UUID,
     client_id: UUID,
     payload: ClientUpdate,
+    *,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> Client:
     """Actualiza los campos editables de un cliente.
 
@@ -195,22 +221,59 @@ async def update_client(
     client = await get_client(session, tenant_id, client_id)
 
     changes = payload.model_dump(exclude_unset=True)
+    before = {field: getattr(client, field) for field in changes}
+
     for field, value in changes.items():
         setattr(client, field, value)
+
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=actor_id,
+        action="client.update",
+        entity="client",
+        entity_id=client.id,
+        before=before,
+        after=changes,
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
 
     await session.commit()
     return await get_client_detail(session, tenant_id, client_id)
 
 
 async def change_status(
-    session: AsyncSession, tenant_id: UUID, client_id: UUID, status: str
+    session: AsyncSession,
+    tenant_id: UUID,
+    client_id: UUID,
+    status: str,
+    *,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> Client:
     """Activa o desactiva un cliente (RN-58).
 
     Desactivar impide crear prestamos nuevos, pero conserva el historial.
     """
     client = await get_client(session, tenant_id, client_id)
+    previous = client.status
     client.status = status
+
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=actor_id,
+        action="client.status_change",
+        entity="client",
+        entity_id=client.id,
+        before={"status": previous},
+        after={"status": status},
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
     await session.commit()
     return client
 

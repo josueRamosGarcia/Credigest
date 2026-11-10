@@ -7,10 +7,11 @@ aislamiento no se delega al cliente de la API: se aplica en el servicio.
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUserDep
+from app.core.request_meta import request_meta
 from app.db.session import get_session
 from app.schemas.client import (
     ClientCreate,
@@ -91,6 +92,7 @@ async def create_client(
     payload: ClientCreate,
     context: CurrentUserDep,
     session: SessionDep,
+    request: Request,
 ) -> ClientDetail:
     """Registra un cliente nuevo con sus referencias.
 
@@ -98,8 +100,14 @@ async def create_client(
         HTTPException: 409 si la CURP ya existe en la financiera.
     """
     try:
+        meta = request_meta(request)
         client = await client_service.create_client(
-            session, context.tenant_id, context.user.id, payload
+            session,
+            context.tenant_id,
+            context.user.id,
+            payload,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
         )
     except client_service.DuplicateCurpError as exc:
         raise HTTPException(
@@ -144,6 +152,7 @@ async def update_client(
     payload: ClientUpdate,
     context: CurrentUserDep,
     session: SessionDep,
+    request: Request,
 ) -> ClientDetail:
     """Actualiza los datos de un cliente.
 
@@ -151,8 +160,15 @@ async def update_client(
         HTTPException: 404 si no existe o es de otra financiera.
     """
     try:
+        meta = request_meta(request)
         client = await client_service.update_client(
-            session, context.tenant_id, client_id, payload
+            session,
+            context.tenant_id,
+            client_id,
+            payload,
+            actor_id=context.user.id,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
         )
     except client_service.ClientNotFoundError as exc:
         raise _not_found() from exc
@@ -174,11 +190,19 @@ async def change_status(
     payload: ClientStatusChange,
     context: CurrentUserDep,
     session: SessionDep,
+    request: Request,
 ) -> ClientRead:
     """Cambia el estado de un cliente."""
     try:
+        meta = request_meta(request)
         client = await client_service.change_status(
-            session, context.tenant_id, client_id, payload.status
+            session,
+            context.tenant_id,
+            client_id,
+            payload.status,
+            actor_id=context.user.id,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
         )
     except client_service.ClientNotFoundError as exc:
         raise _not_found() from exc

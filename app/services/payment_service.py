@@ -35,6 +35,7 @@ from app.models.loan import Installment, Loan
 from app.models.payment import Payment, PaymentApplication
 from app.models.tenant import Tenant
 from app.schemas.payment import PaymentCreate
+from app.services import audit_service
 
 #: Tamano maximo de pagina.
 MAX_PAGE_SIZE = 100
@@ -141,6 +142,8 @@ async def register_payment(
     payload: PaymentCreate,
     *,
     today: date | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> PaymentOutcome:
     """Registra un pago y aplica el dinero a las cuotas.
 
@@ -235,6 +238,28 @@ async def register_payment(
             installment.paid_at = datetime.now(UTC)
 
     loan.status = _loan_status(loan, business_date)
+
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=registered_by,
+        action="payment.create",
+        entity="payment",
+        entity_id=payment.id,
+        after={
+            "folio": payment.folio,
+            "amount": str(payment.amount),
+            "method": payment.method,
+            "loan_id": str(loan.id),
+            "covered_late_fee": str(covered[Concept.MORA]),
+            "covered_interest": str(covered[Concept.INTERES]),
+            "covered_principal": str(covered[Concept.CAPITAL]),
+            "loan_status": loan.status,
+        },
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
     await session.commit()
 
     refreshed = await get_payment(session, tenant_id, payment.id)
@@ -337,6 +362,9 @@ async def cancel_payment(
     payment_id: UUID,
     cancelled_by: UUID,
     reason: str,
+    *,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
 ) -> PaymentOutcome:
     """Anula un pago revirtiendo sus aplicaciones (RN-36).
 
@@ -396,8 +424,23 @@ async def cancel_payment(
     payment.cancelled_by = cancelled_by
     payment.cancelled_at = datetime.now(UTC)
     payment.cancel_reason = reason
+    amount = payment.amount
 
     loan.status = _loan_status(loan, date.today())
+
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=cancelled_by,
+        action="payment.cancel",
+        entity="payment",
+        entity_id=payment.id,
+        before={"status": "aplicado", "amount": str(amount)},
+        after={"status": "anulado", "reason": reason, "loan_status": loan.status},
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
     await session.commit()
 
     refreshed = await get_payment(session, tenant_id, payment.id)
