@@ -2,10 +2,12 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUserDep
+from app.core.rate_limit import login_limiter
+from app.core.request_meta import request_meta
 from app.db.session import get_session
 from app.schemas.auth import (
     CurrentUser,
@@ -20,6 +22,17 @@ router = APIRouter(prefix="/auth", tags=["autenticacion"])
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
+def _client_key(request: Request) -> str:
+    """Identifica al cliente para el limite de intentos.
+
+    Se usa la IP real, respetando `X-Forwarded-For` cuando hay un proxy delante.
+    Si no se puede determinar, se agrupa en una clave comun: es preferible
+    limitar de mas que dejar el login abierto.
+    """
+    meta = request_meta(request)
+    return meta.ip_address or "desconocido"
+
+
 @router.post(
     "/login",
     response_model=TokenPair,
@@ -29,20 +42,40 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
         "El correo es unico global, asi que no hace falta indicar la financiera."
     ),
 )
-async def login(payload: LoginRequest, session: SessionDep) -> TokenPair:
+async def login(
+    payload: LoginRequest, session: SessionDep, request: Request
+) -> TokenPair:
     """Inicia sesion y devuelve los tokens.
 
     Raises:
-        HTTPException: 401 si las credenciales no son validas.
+        HTTPException: 401 si las credenciales no son validas; 429 si se
+            superaron los intentos permitidos desde esa IP.
     """
+    client_key = _client_key(request)
+    allowed, retry_after = login_limiter.check(client_key)
+
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=(
+                "Demasiados intentos fallidos. "
+                f"Vuelve a intentarlo en {retry_after} segundos."
+            ),
+            headers={"Retry-After": str(retry_after)},
+        )
+
     try:
         user = await auth_service.authenticate(session, payload.email, payload.password)
     except auth_service.AuthenticationError as exc:
+        # Solo los intentos fallidos cuentan: un login correcto no penaliza.
+        login_limiter.hit(client_key)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=str(exc),
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    login_limiter.reset(client_key)
 
     tokens = await auth_service.issue_tokens(session, user)
 

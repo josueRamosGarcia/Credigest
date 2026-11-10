@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     access_token_minutes: int = 15
     refresh_token_days: int = 7
 
+    #: Limite de intentos de login por IP y su ventana en segundos (RNF-10).
+    login_rate_limit: int = 5
+    login_rate_window: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:
