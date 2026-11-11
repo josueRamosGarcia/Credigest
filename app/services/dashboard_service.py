@@ -9,6 +9,11 @@ Reglas cubiertas:
 - RN-49: los pagos anulados se excluyen siempre.
 - RN-50: la morosidad se expresa con 2 decimales.
 - RN-51: el aging se calcula por cuota vencida, no por prestamo.
+
+Nota sobre zonas horarias: `payment.created_at` es `timestamptz`, que PostgreSQL
+guarda en UTC. Comparar `func.date(created_at)` contra una fecha local daria un
+dia de diferencia despues de las 18:00 hora de Mexico. Por eso todas las
+comparaciones convierten primero a la zona del negocio.
 """
 
 from dataclasses import dataclass, field
@@ -20,6 +25,7 @@ from uuid import UUID
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
 from app.domain.money import round_money
 from app.models.loan import Installment, Loan
 from app.models.payment import Payment, PaymentApplication
@@ -76,6 +82,16 @@ class AgingReport:
     total_vencido: Decimal = Decimal("0.00")
 
 
+def local_date(column: Any) -> Any:
+    """Convierte una columna `timestamptz` a fecha en la zona del negocio.
+
+    Sin esto, un pago registrado a las 20:00 hora de Mexico aparece con la fecha
+    del dia siguiente, porque PostgreSQL lo guarda en UTC.
+    """
+    timezone = get_settings().timezone
+    return func.date(func.timezone(timezone, column))
+
+
 def _to_decimal(value: Decimal | int | float | None) -> Decimal:
     """Convierte el resultado de una agregacion a Decimal redondeado."""
     if value is None:
@@ -96,9 +112,9 @@ def _payments_in_range(
         Payment.status == "aplicado",
     ]
     if from_date is not None:
-        conditions.append(func.date(Payment.created_at) >= from_date)
+        conditions.append(local_date(Payment.created_at) >= from_date)
     if to_date is not None:
-        conditions.append(func.date(Payment.created_at) <= to_date)
+        conditions.append(local_date(Payment.created_at) <= to_date)
 
     return select(Payment.id).where(*conditions)
 
@@ -348,19 +364,24 @@ async def collections_by_day(
 
     Sirve para la grafica de flujo de caja del dashboard.
     """
+    # Se reutiliza la misma expresion para SELECT, GROUP BY y ORDER BY:
+    # si se genera una nueva en cada clausula, PostgreSQL no las reconoce como
+    # equivalentes y rechaza la consulta.
+    day = local_date(Payment.created_at).label("day")
+
     rows = await session.execute(
         select(
-            func.date(Payment.created_at).label("day"),
+            day,
             func.coalesce(func.sum(Payment.amount), 0),
         )
         .where(
             Payment.tenant_id == tenant_id,
             Payment.status == "aplicado",
-            func.date(Payment.created_at) >= from_date,
-            func.date(Payment.created_at) <= to_date,
+            day >= from_date,
+            day <= to_date,
         )
-        .group_by(func.date(Payment.created_at))
-        .order_by(func.date(Payment.created_at))
+        .group_by(day)
+        .order_by(day)
     )
 
-    return [(day, _to_decimal(total)) for day, total in rows.all()]
+    return [(day_value, _to_decimal(total)) for day_value, total in rows.all()]

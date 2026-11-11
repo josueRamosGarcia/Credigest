@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import AuditLog
+from app.services.dashboard_service import local_date
 
 logger = logging.getLogger(__name__)
 
@@ -202,10 +203,12 @@ async def list_entries(
     page_size = min(max(1, page_size), MAX_PAGE_SIZE)
 
     conditions = [AuditLog.tenant_id == tenant_id]
+    # La bitacora guarda en UTC; se compara contra la fecha local del negocio
+    # para no desfasar un dia despues de las 18:00 hora de Mexico.
     if from_date is not None:
-        conditions.append(func.date(AuditLog.created_at) >= from_date)
+        conditions.append(local_date(AuditLog.created_at) >= from_date)
     if to_date is not None:
-        conditions.append(func.date(AuditLog.created_at) <= to_date)
+        conditions.append(local_date(AuditLog.created_at) <= to_date)
     if user_id is not None:
         conditions.append(AuditLog.user_id == user_id)
     if action:

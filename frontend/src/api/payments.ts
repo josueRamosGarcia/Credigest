@@ -1,6 +1,6 @@
 /** Llamadas de pagos. */
 
-import { request } from "./client";
+import { downloadFile, request } from "./client";
 import type { Money, Paginated, PaymentMethod, PaymentType } from "./types";
 
 export interface PaymentApplication {
@@ -99,3 +99,15 @@ export const CONCEPT_LABELS: Record<string, string> = {
   interes: "Interés",
   capital: "Capital",
 };
+
+/** Descarga el comprobante de pago en PDF. */
+export async function downloadReceipt(paymentId: string, folio: string): Promise<void> {
+  await downloadFile(`/payments/${paymentId}/receipt.pdf`, `${folio.toLowerCase()}.pdf`);
+}
+
+/** Obtiene el enlace de WhatsApp con el resumen del pago. */
+export async function getWhatsappLink(
+  paymentId: string,
+): Promise<{ url: string; phone: string }> {
+  return request<{ url: string; phone: string }>(`/payments/${paymentId}/whatsapp`);
+}

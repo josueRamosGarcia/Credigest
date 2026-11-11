@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     login_rate_limit: int = 5
     login_rate_window: int = 60
 
+    #: Directorio donde se guardan los documentos de los clientes (RN-60).
+    storage_dir: str = "storage"
+
 
 @lru_cache
 def get_settings() -> Settings:

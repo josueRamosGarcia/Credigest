@@ -15,7 +15,13 @@ import {
   downloadPagare,
   getLoan,
 } from "@/api/loans";
-import { listPayments, CONCEPT_LABELS, PAYMENT_METHOD_LABELS } from "@/api/payments";
+import {
+  CONCEPT_LABELS,
+  PAYMENT_METHOD_LABELS,
+  downloadReceipt,
+  getWhatsappLink,
+  listPayments,
+} from "@/api/payments";
 import { PaymentForm } from "@/features/payments/PaymentForm";
 import {
   Badge,
@@ -309,15 +315,34 @@ export function LoanDetailPage() {
                     {payment.folio} · {formatDateTime(payment.created_at)}
                   </p>
                 </div>
-                <Badge
-                  className={
-                    payment.status === "aplicado"
-                      ? "bg-green-100 text-green-800"
-                      : "bg-slate-100 text-slate-600"
-                  }
-                >
-                  {payment.status === "aplicado" ? "Aplicado" : "Anulado"}
-                </Badge>
+                <div className="flex items-center gap-3">
+                  <Badge
+                    className={
+                      payment.status === "aplicado"
+                        ? "bg-green-100 text-green-800"
+                        : "bg-slate-100 text-slate-600"
+                    }
+                  >
+                    {payment.status === "aplicado" ? "Aplicado" : "Anulado"}
+                  </Badge>
+                  <button
+                    type="button"
+                    className="text-xs text-brand-700 hover:underline"
+                    onClick={() => downloadReceipt(payment.id, payment.folio)}
+                  >
+                    PDF
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs text-green-700 hover:underline"
+                    onClick={async () => {
+                      const { url } = await getWhatsappLink(payment.id);
+                      window.open(url, "_blank", "noopener,noreferrer");
+                    }}
+                  >
+                    WhatsApp
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

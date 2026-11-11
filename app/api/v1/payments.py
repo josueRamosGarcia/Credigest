@@ -9,12 +9,23 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import AuthContext, CurrentUserDep, get_current_user
 from app.core.request_meta import request_meta
 from app.db.session import get_session
+from app.models.client import Client
+from app.models.loan import Loan
+from app.models.user import User
+from app.pdf.generator import MissingDependencyError, PdfError
+from app.pdf.receipt import (
+    build_receipt_context,
+    receipt_filename,
+    render_receipt_pdf,
+    whatsapp_link,
+)
 from app.schemas.payment import (
     PaymentCancelRequest,
     PaymentCreate,
@@ -198,3 +209,111 @@ async def cancel_payment(
         covered_interest=outcome.covered_interest,
         covered_principal=outcome.covered_principal,
     )
+
+
+@router.get(
+    "/{payment_id}/receipt.pdf",
+    summary="Descargar el comprobante de pago",
+    description=(
+        "Genera un PDF de formato angosto con el folio, el cliente, el monto, "
+        "el desglose por concepto y el saldo restante."
+    ),
+    response_class=Response,
+)
+async def download_receipt(
+    payment_id: UUID,
+    context: CurrentUserDep,
+    session: SessionDep,
+) -> Response:
+    """Devuelve el comprobante listo para imprimir o enviar.
+
+    Raises:
+        HTTPException: 404 si el pago no existe; 503 si falta WeasyPrint.
+    """
+    try:
+        payment = await payment_service.get_payment(session, context.tenant_id, payment_id)
+    except payment_service.PaymentNotFoundError as exc:
+        raise _not_found(str(exc)) from exc
+
+    loan = await session.scalar(select(Loan).where(Loan.id == payment.loan_id))
+    if loan is None:
+        raise _not_found("El préstamo del pago ya no existe.")
+
+    client = await session.scalar(select(Client).where(Client.id == loan.client_id))
+    if client is None:
+        raise _not_found("El cliente del préstamo ya no existe.")
+
+    registered_by = None
+    if payment.registered_by:
+        registered_by = await session.scalar(
+            select(User).where(User.id == payment.registered_by)
+        )
+
+    remaining = await payment_service.remaining_total(session, loan)
+    applications = [(app.concept, app.amount) for app in payment.applications]
+
+    try:
+        receipt_context = build_receipt_context(
+            tenant=context.tenant,
+            client=client,
+            loan=loan,
+            payment=payment,
+            applications=applications,
+            remaining_total=remaining,
+            registered_by=registered_by,
+        )
+        content = render_receipt_pdf(receipt_context)
+    except MissingDependencyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
+    except PdfError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+        ) from exc
+
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{receipt_filename(payment)}"',
+            "Content-Length": str(len(content)),
+        },
+    )
+
+
+@router.get(
+    "/{payment_id}/whatsapp",
+    summary="Enlace de WhatsApp con el resumen del pago",
+    description=(
+        "Devuelve una URL de wa.me con el resumen listo para enviar al cliente. "
+        "No requiere la API de WhatsApp."
+    ),
+)
+async def whatsapp_summary(
+    payment_id: UUID,
+    context: CurrentUserDep,
+    session: SessionDep,
+) -> dict[str, str]:
+    """Devuelve el enlace de WhatsApp para compartir el comprobante."""
+    try:
+        payment = await payment_service.get_payment(session, context.tenant_id, payment_id)
+    except payment_service.PaymentNotFoundError as exc:
+        raise _not_found(str(exc)) from exc
+
+    loan = await session.scalar(select(Loan).where(Loan.id == payment.loan_id))
+    if loan is None:
+        raise _not_found("El préstamo del pago ya no existe.")
+
+    client = await session.scalar(select(Client).where(Client.id == loan.client_id))
+    if client is None:
+        raise _not_found("El cliente del préstamo ya no existe.")
+
+    return {
+        "url": whatsapp_link(
+            client.phone,
+            tenant_name=context.tenant.name,
+            payment=payment,
+        ),
+        "phone": client.phone,
+    }

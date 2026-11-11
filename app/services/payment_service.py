@@ -38,6 +38,7 @@ from app.models.payment import Payment, PaymentApplication
 from app.models.tenant import Tenant
 from app.schemas.payment import PaymentCreate
 from app.services import audit_service
+from app.services.dashboard_service import local_date
 
 #: Tamano maximo de pagina.
 MAX_PAGE_SIZE = 100
@@ -344,9 +345,9 @@ async def list_payments(
     if loan_id:
         conditions.append(Payment.loan_id == loan_id)
     if from_date:
-        conditions.append(func.date(Payment.created_at) >= from_date)
+        conditions.append(local_date(Payment.created_at) >= from_date)
     if to_date:
-        conditions.append(func.date(Payment.created_at) <= to_date)
+        conditions.append(local_date(Payment.created_at) <= to_date)
 
     total = await session.scalar(select(func.count()).select_from(Payment).where(*conditions))
 

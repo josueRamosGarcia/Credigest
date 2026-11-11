@@ -3,13 +3,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
-import {
-  DOCUMENT_LABELS,
-  changeClientStatus,
-  formatBytes,
-  getClient,
-  listDocuments,
-} from "@/api/clients";
+import { changeClientStatus, getClient } from "@/api/clients";
+import { DocumentsSection } from "@/features/clients/DocumentsSection";
 import {
   LOAN_STATUS_LABELS,
   LOAN_STATUS_STYLES,
@@ -39,12 +34,6 @@ export function ClientDetailPage() {
   const loans = useQuery({
     queryKey: ["loans", { client_id: id }],
     queryFn: () => listLoans({ client_id: id, page_size: 50 }),
-    enabled: Boolean(id),
-  });
-
-  const documents = useQuery({
-    queryKey: ["clients", id, "documents"],
-    queryFn: () => listDocuments(id),
     enabled: Boolean(id),
   });
 
@@ -252,34 +241,9 @@ export function ClientDetailPage() {
         <h2 className="mb-4 text-sm font-semibold tracking-wide text-slate-700 uppercase">
           Documentos
         </h2>
-
-        {documents.isLoading && <Spinner />}
-
-        {documents.data && documents.data.length === 0 && (
-          <p className="text-sm text-slate-500">
-            Sin documentos cargados. La carga de archivos estará disponible
-            próximamente.
-          </p>
-        )}
-
-        {documents.data && documents.data.length > 0 && (
-          <ul className="divide-y divide-slate-100">
-            {documents.data.map((document) => (
-              <li
-                key={document.id}
-                className="flex items-center justify-between py-2 text-sm"
-              >
-                <span className="text-slate-700">
-                  {DOCUMENT_LABELS[document.doc_type] ?? document.doc_type}
-                </span>
-                <span className="tabular text-xs text-slate-500">
-                  {formatBytes(document.size_bytes)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <DocumentsSection clientId={data.id} />
       </Card>
+
     </div>
   );
 }

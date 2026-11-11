@@ -347,3 +347,45 @@ async def add_document(
     await session.commit()
     await session.refresh(document)
     return document
+
+
+async def remove_document(
+    session: AsyncSession,
+    tenant_id: UUID,
+    client_id: UUID,
+    document_id: UUID,
+) -> str:
+    """Elimina un documento y devuelve su clave de almacenamiento.
+
+    El borrado del archivo fisico lo hace quien llama: el servicio no conoce el
+    almacenamiento.
+
+    Args:
+        session: Sesion de base de datos.
+        tenant_id: Financiera del usuario.
+        client_id: Cliente dueno del documento.
+        document_id: Documento a eliminar.
+
+    Returns:
+        La clave del archivo, para que el llamador lo borre del almacen.
+
+    Raises:
+        ClientNotFoundError: Si el cliente no existe o el documento no le
+            pertenece.
+    """
+    await get_client(session, tenant_id, client_id)
+
+    document = await session.scalar(
+        select(ClientDocument).where(
+            ClientDocument.id == document_id,
+            ClientDocument.client_id == client_id,
+        )
+    )
+    if document is None:
+        raise ClientNotFoundError("El documento no existe.")
+
+    file_key = document.file_key
+    await session.delete(document)
+    await session.commit()
+
+    return file_key

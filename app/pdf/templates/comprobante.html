@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Comprobante {{ payment.folio }}</title>
+  <style>
+    @page {
+      size: 80mm 200mm;
+      margin: 6mm 5mm;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: "DejaVu Sans", Arial, sans-serif;
+      font-size: 8.5pt;
+      line-height: 1.4;
+      color: #111;
+      margin: 0;
+    }
+
+    .center { text-align: center; }
+
+    .tenant {
+      font-size: 11pt;
+      font-weight: bold;
+      margin-bottom: 1mm;
+    }
+
+    .subtitle {
+      font-size: 7.5pt;
+      color: #555;
+      margin-bottom: 3mm;
+    }
+
+    .divider {
+      border-top: 0.6pt dashed #999;
+      margin: 2.5mm 0;
+    }
+
+    .amount {
+      text-align: center;
+      font-size: 16pt;
+      font-weight: bold;
+      margin: 3mm 0 1mm 0;
+    }
+
+    .amount-words {
+      text-align: center;
+      font-size: 7.5pt;
+      font-style: italic;
+      color: #444;
+      margin-bottom: 3mm;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    td {
+      padding: 0.8mm 0;
+      vertical-align: top;
+    }
+
+    td.label {
+      width: 42%;
+      color: #555;
+    }
+
+    td.value {
+      text-align: right;
+      font-weight: 600;
+    }
+
+    .concept-row td {
+      padding: 1mm 0;
+      border-bottom: 0.4pt solid #eee;
+    }
+
+    .concept-row td.name { color: #333; }
+    .concept-row td.num { text-align: right; }
+
+    .total-row td {
+      padding-top: 2mm;
+      border-top: 0.8pt solid #333;
+      font-weight: bold;
+      font-size: 9.5pt;
+    }
+
+    .total-row td.num { text-align: right; }
+
+    .status {
+      margin-top: 3mm;
+      padding: 1.5mm;
+      text-align: center;
+      font-size: 7.5pt;
+      border: 0.5pt solid #999;
+    }
+
+    .status.anulado {
+      border-color: #b91c1c;
+      color: #b91c1c;
+      font-weight: bold;
+    }
+
+    .footer {
+      margin-top: 4mm;
+      font-size: 6.5pt;
+      text-align: center;
+      color: #777;
+      border-top: 0.4pt solid #ddd;
+      padding-top: 2mm;
+    }
+
+    .signature {
+      margin-top: 8mm;
+      text-align: center;
+      font-size: 7pt;
+    }
+
+    .signature .line {
+      border-top: 0.5pt solid #333;
+      margin: 8mm 8mm 1mm 8mm;
+    }
+  </style>
+</head>
+<body>
+
+<div class="center">
+  <div class="tenant">{{ tenant.name }}</div>
+  <div class="subtitle">Comprobante de pago</div>
+</div>
+
+<div class="divider"></div>
+
+<table>
+  <tr>
+    <td class="label">Folio</td>
+    <td class="value">{{ payment.folio }}</td>
+  </tr>
+  <tr>
+    <td class="label">Fecha</td>
+    <td class="value">{{ payment.date }}</td>
+  </tr>
+  <tr>
+    <td class="label">Cliente</td>
+    <td class="value">{{ client.full_name }}</td>
+  </tr>
+  <tr>
+    <td class="label">Forma de pago</td>
+    <td class="value">{{ payment.method_label }}</td>
+  </tr>
+  {% if payment.spei_reference %}
+  <tr>
+    <td class="label">Referencia SPEI</td>
+    <td class="value">{{ payment.spei_reference }}</td>
+  </tr>
+  {% endif %}
+  <tr>
+    <td class="label">Registró</td>
+    <td class="value">{{ payment.registered_by }}</td>
+  </tr>
+</table>
+
+<div class="divider"></div>
+
+<div class="amount">$ {{ payment.amount }}</div>
+<div class="amount-words">{{ payment.amount_words }}</div>
+
+<div class="divider"></div>
+
+<p style="font-size: 7.5pt; color: #555; margin: 0 0 1.5mm 0;">
+  Aplicación del pago
+</p>
+
+<table>
+  {% for concept in concepts %}
+  <tr class="concept-row">
+    <td class="name">{{ concept.label }}</td>
+    <td class="num">$ {{ concept.amount }}</td>
+  </tr>
+  {% endfor %}
+  <tr class="total-row">
+    <td>Total aplicado</td>
+    <td class="num">$ {{ payment.amount }}</td>
+  </tr>
+</table>
+
+<div class="divider"></div>
+
+<table>
+  <tr>
+    <td class="label">Saldo pendiente del préstamo</td>
+    <td class="value">$ {{ loan.remaining_total }}</td>
+  </tr>
+  <tr>
+    <td class="label">Estado del préstamo</td>
+    <td class="value">{{ loan.status_label }}</td>
+  </tr>
+</table>
+
+{% if payment.status == "anulado" %}
+<div class="status anulado">
+  PAGO ANULADO{% if payment.cancel_reason %} · {{ payment.cancel_reason }}{% endif %}
+</div>
+{% endif %}
+
+<div class="signature">
+  <div class="line"></div>
+  Recibí de conformidad
+  <br />
+  {{ client.full_name }}
+</div>
+
+<div class="footer">
+  Documento generado por Credigest el {{ payment.date }}.<br />
+  Conserve este comprobante como constancia de su pago.
+</div>
+
+</body>
+</html>

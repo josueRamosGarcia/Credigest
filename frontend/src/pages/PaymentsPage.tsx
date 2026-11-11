@@ -5,6 +5,8 @@ import { useState } from "react";
 
 import {
   PAYMENT_METHOD_LABELS,
+  downloadReceipt,
+  getWhatsappLink,
   listPayments,
 } from "@/api/payments";
 import {
@@ -18,6 +20,59 @@ import {
 import { formatCurrency, formatDateTime } from "@/lib/format";
 
 const PAGE_SIZE = 20;
+
+/** Botones para descargar el comprobante o compartirlo por WhatsApp. */
+function ReceiptActions({ paymentId, folio }: { paymentId: string; folio: string }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handlePdf = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await downloadReceipt(paymentId, folio);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "No se pudo descargar.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleWhatsapp = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { url } = await getWhatsappLink(paymentId);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "No se pudo abrir WhatsApp.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <button
+        type="button"
+        className="text-xs text-brand-700 hover:underline disabled:opacity-50"
+        onClick={handlePdf}
+        disabled={busy}
+      >
+        PDF
+      </button>
+      <button
+        type="button"
+        className="text-xs text-green-700 hover:underline disabled:opacity-50"
+        onClick={handleWhatsapp}
+        disabled={busy}
+      >
+        WhatsApp
+      </button>
+      {error && <span className="text-xs text-red-600">{error}</span>}
+    </div>
+  );
+}
 
 export function PaymentsPage() {
   const [page, setPage] = useState(1);
@@ -66,6 +121,7 @@ export function PaymentsPage() {
                 <th className="px-4 py-3 font-medium">Forma</th>
                 <th className="px-4 py-3 font-medium">Referencia</th>
                 <th className="px-4 py-3 font-medium">Estado</th>
+                <th className="px-4 py-3 font-medium">Comprobante</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -96,6 +152,9 @@ export function PaymentsPage() {
                     >
                       {payment.status === "aplicado" ? "Aplicado" : "Anulado"}
                     </Badge>
+                  </td>
+                  <td className="px-4 py-3">
+                    <ReceiptActions paymentId={payment.id} folio={payment.folio} />
                   </td>
                 </tr>
               ))}
