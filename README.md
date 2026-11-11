@@ -153,6 +153,38 @@ El login acepta **5 intentos por minuto por IP**. Al superarlos responde `429` c
 la cabecera `Retry-After`. El contador vive en memoria del proceso; si más adelante
 se corre con varios workers, conviene moverlo a Redis.
 
+## Frontend
+
+La interfaz está en `frontend/` con React, TypeScript, Vite y Tailwind CSS.
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Abre `http://localhost:5173`. Vite reenvía las llamadas a `/api` hacia
+`http://127.0.0.1:8000`, así que **el backend debe estar corriendo**.
+
+| Comando | Para qué |
+| :--- | :--- |
+| `npm run dev` | Servidor de desarrollo con recarga |
+| `npm run build` | Compila para producción en `dist/` |
+| `npm test` | Pruebas con Vitest |
+| `npm run lint` | Revisión de estilo con oxlint |
+| `npm run typecheck` | Verificación de tipos |
+
+### Pantallas por rol
+
+| Rol | Pantallas |
+| :--- | :--- |
+| Administrador | Dashboard, clientes, préstamos, pagos, rutas y auditoría |
+| Prestamista | Clientes, préstamos con cotizador y pagos |
+| Cobrador | Ruta del día y registro de pagos desde el celular |
+
+> Si abres el frontend desde Windows y el proxy no alcanza el backend en WSL2,
+> arranca uvicorn con `--host 0.0.0.0` y usa la IP de WSL (ver más abajo).
+
 ## Módulos de la API
 
 | Módulo | Rutas base | Para qué |
