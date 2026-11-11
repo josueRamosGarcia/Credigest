@@ -182,6 +182,18 @@ Abre `http://localhost:5173`. Vite reenvía las llamadas a `/api` hacia
 | Prestamista | Clientes, préstamos con cotizador y pagos |
 | Cobrador | Ruta del día y registro de pagos desde el celular |
 
+### Instalar como aplicación en el celular (PWA)
+
+La interfaz es una PWA: se puede instalar en el teléfono y abrir como una app.
+
+1. Compila para producción: `npm run build`
+2. Sirve la carpeta `dist/` por HTTPS (o con `npm run preview` para probar).
+3. Abre la URL en el celular y elige **"Agregar a la pantalla de inicio"**.
+
+> El service worker solo se registra en producción. Sirve caché **de solo
+> lectura**: los datos se consultan sin señal, pero registrar un pago exige
+> conexión, para evitar duplicados.
+
 > Si abres el frontend desde Windows y el proxy no alcanza el backend en WSL2,
 > arranca uvicorn con `--host 0.0.0.0` y usa la IP de WSL (ver más abajo).
 
@@ -243,3 +255,41 @@ la terminal y prueba de nuevo `http://localhost:8000`.
 
 > `--host 0.0.0.0` expone la API a tu red local. Úsalo solo en desarrollo y en redes
 > de confianza.
+
+## Comprobante de pago
+
+Después de registrar un pago se puede descargar su comprobante:
+
+```bash
+curl -X GET http://localhost:8000/api/v1/payments/<id>/receipt.pdf \
+  -H "Authorization: Bearer <access_token>" \
+  --output comprobante.pdf
+```
+
+Formato angosto (80 mm), listo para impresora de tickets o para enviar como imagen.
+
+También hay un enlace de WhatsApp con el resumen en texto:
+
+```bash
+curl -X GET http://localhost:8000/api/v1/payments/<id>/whatsapp \
+  -H "Authorization: Bearer <access_token>"
+```
+
+Devuelve una URL `wa.me` que abre la aplicación sin necesitar la API de WhatsApp.
+
+## Documentos de clientes
+
+Se guardan en disco, bajo `STORAGE_DIR` (por defecto `storage/`). La ruta se
+organiza como `<tenant>/<cliente>/<tipo>-<aleatorio>.<ext>`.
+
+| Método | Ruta | Para qué |
+| :--- | :--- | :--- |
+| POST | `/api/v1/clients/{id}/documents` | Subir (multipart: `file` y `doc_type`) |
+| GET | `/api/v1/clients/{id}/documents/{doc}` | Descargar |
+| DELETE | `/api/v1/clients/{id}/documents/{doc}` | Eliminar |
+
+Se aceptan PDF, JPG, PNG y WEBP de hasta 10 MB. El nombre original se descarta y
+la ruta interna nunca se expone.
+
+> Para producción en varios servidores conviene cambiar `LocalStorage` por una
+> implementación de S3. La interfaz `Storage` está pensada para eso.

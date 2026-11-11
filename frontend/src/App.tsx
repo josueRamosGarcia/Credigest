@@ -1,31 +1,60 @@
 /**
- * Definición de rutas y protección por sesión.
+ * Rutas de la aplicacion con carga diferida.
  *
- * El acceso a cada módulo se decide por rol. El cobrador entra a su ruta del
- * día; el prestamista a clientes y préstamos; el administrador a todo.
+ * Cada pantalla se descarga solo cuando se visita. Asi el cobrador no baja el
+ * codigo del dashboard ni el del cotizador, que nunca usa.
  */
 
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 
 import { useAuth } from "@/auth/useAuth";
 import { homeFor } from "@/auth/home";
 import { Spinner } from "@/components/ui";
 import { AppLayout } from "@/layouts/AppLayout";
-import { AuditPage } from "@/pages/AuditPage";
-import { ClientDetailPage } from "@/pages/ClientDetailPage";
-import { ClientNewPage } from "@/pages/ClientNewPage";
-import { ClientsPage } from "@/pages/ClientsPage";
-import { DashboardPage } from "@/pages/DashboardPage";
-import { LoanDetailPage } from "@/pages/LoanDetailPage";
-import { LoanNewPage } from "@/pages/LoanNewPage";
-import { LoansPage } from "@/pages/LoansPage";
 import { LoginPage } from "@/pages/LoginPage";
-import { PaymentsPage } from "@/pages/PaymentsPage";
-import { RouteDetailPage } from "@/pages/RouteDetailPage";
-import { RoutesPage } from "@/pages/RoutesPage";
 
-/** Exige sesión iniciada; si no la hay, manda al login recordando el destino. */
+// Pantallas cargadas bajo demanda.
+const DashboardPage = lazy(() =>
+  import("@/pages/DashboardPage").then((module) => ({ default: module.DashboardPage })),
+);
+const ClientsPage = lazy(() =>
+  import("@/pages/ClientsPage").then((module) => ({ default: module.ClientsPage })),
+);
+const ClientNewPage = lazy(() =>
+  import("@/pages/ClientNewPage").then((module) => ({ default: module.ClientNewPage })),
+);
+const ClientDetailPage = lazy(() =>
+  import("@/pages/ClientDetailPage").then((module) => ({ default: module.ClientDetailPage })),
+);
+const LoansPage = lazy(() =>
+  import("@/pages/LoansPage").then((module) => ({ default: module.LoansPage })),
+);
+const LoanNewPage = lazy(() =>
+  import("@/pages/LoanNewPage").then((module) => ({ default: module.LoanNewPage })),
+);
+const LoanDetailPage = lazy(() =>
+  import("@/pages/LoanDetailPage").then((module) => ({ default: module.LoanDetailPage })),
+);
+const PaymentsPage = lazy(() =>
+  import("@/pages/PaymentsPage").then((module) => ({ default: module.PaymentsPage })),
+);
+const RoutesPage = lazy(() =>
+  import("@/pages/RoutesPage").then((module) => ({ default: module.RoutesPage })),
+);
+const RouteDetailPage = lazy(() =>
+  import("@/pages/RouteDetailPage").then((module) => ({ default: module.RouteDetailPage })),
+);
+const AuditPage = lazy(() =>
+  import("@/pages/AuditPage").then((module) => ({ default: module.AuditPage })),
+);
+
+/** Envuelve una pantalla con un indicador mientras se descarga su codigo. */
+function Page({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<Spinner label="Cargando…" />}>{children}</Suspense>;
+}
+
+/** Exige sesion iniciada; si no la hay, manda al login recordando el destino. */
 function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   const location = useLocation();
@@ -74,7 +103,9 @@ export function AppRoutes() {
           path="dashboard"
           element={
             <RequireRole roles={["admin"]}>
-              <DashboardPage />
+              <Page>
+                <DashboardPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -83,7 +114,9 @@ export function AppRoutes() {
           path="clientes"
           element={
             <RequireRole roles={["prestamista"]}>
-              <ClientsPage />
+              <Page>
+                <ClientsPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -91,7 +124,9 @@ export function AppRoutes() {
           path="clientes/nuevo"
           element={
             <RequireRole roles={["prestamista"]}>
-              <ClientNewPage />
+              <Page>
+                <ClientNewPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -99,7 +134,9 @@ export function AppRoutes() {
           path="clientes/:id"
           element={
             <RequireRole roles={["prestamista"]}>
-              <ClientDetailPage />
+              <Page>
+                <ClientDetailPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -108,7 +145,9 @@ export function AppRoutes() {
           path="prestamos"
           element={
             <RequireRole roles={["prestamista"]}>
-              <LoansPage />
+              <Page>
+                <LoansPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -116,7 +155,9 @@ export function AppRoutes() {
           path="prestamos/nuevo"
           element={
             <RequireRole roles={["prestamista"]}>
-              <LoanNewPage />
+              <Page>
+                <LoanNewPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -124,7 +165,9 @@ export function AppRoutes() {
           path="prestamos/:id"
           element={
             <RequireRole roles={["prestamista"]}>
-              <LoanDetailPage />
+              <Page>
+                <LoanDetailPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -133,7 +176,9 @@ export function AppRoutes() {
           path="pagos"
           element={
             <RequireRole roles={["prestamista"]}>
-              <PaymentsPage />
+              <Page>
+                <PaymentsPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -142,7 +187,9 @@ export function AppRoutes() {
           path="rutas"
           element={
             <RequireRole roles={["cobrador"]}>
-              <RoutesPage />
+              <Page>
+                <RoutesPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -150,7 +197,9 @@ export function AppRoutes() {
           path="rutas/:id"
           element={
             <RequireRole roles={["cobrador"]}>
-              <RouteDetailPage />
+              <Page>
+                <RouteDetailPage />
+              </Page>
             </RequireRole>
           }
         />
@@ -159,7 +208,9 @@ export function AppRoutes() {
           path="auditoria"
           element={
             <RequireRole roles={["admin"]}>
-              <AuditPage />
+              <Page>
+                <AuditPage />
+              </Page>
             </RequireRole>
           }
         />

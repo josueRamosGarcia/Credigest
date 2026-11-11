@@ -22,6 +22,7 @@ import {
   getWhatsappLink,
   listPayments,
 } from "@/api/payments";
+import { CancelPaymentForm } from "@/features/payments/CancelPaymentForm";
 import { PaymentForm } from "@/features/payments/PaymentForm";
 import {
   Badge,
@@ -40,6 +41,7 @@ export function LoanDetailPage() {
   const [showCancel, setShowCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [cancellingPayment, setCancellingPayment] = useState<string | null>(null);
 
   const loan = useQuery({
     queryKey: ["loans", id],
@@ -299,52 +301,79 @@ export function LoanDetailPage() {
 
         {payments.data && payments.data.items.length > 0 && (
           <ul className="divide-y divide-slate-100">
-            {payments.data.items.map((payment) => (
-              <li
-                key={payment.id}
-                className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm"
-              >
-                <div>
-                  <p className="font-medium text-slate-900">
-                    {formatCurrency(payment.amount)}{" "}
-                    <span className="font-normal text-slate-500">
-                      · {PAYMENT_METHOD_LABELS[payment.method]}
-                    </span>
-                  </p>
-                  <p className="tabular text-xs text-slate-500">
-                    {payment.folio} · {formatDateTime(payment.created_at)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Badge
-                    className={
-                      payment.status === "aplicado"
-                        ? "bg-green-100 text-green-800"
-                        : "bg-slate-100 text-slate-600"
-                    }
-                  >
-                    {payment.status === "aplicado" ? "Aplicado" : "Anulado"}
-                  </Badge>
-                  <button
-                    type="button"
-                    className="text-xs text-brand-700 hover:underline"
-                    onClick={() => downloadReceipt(payment.id, payment.folio)}
-                  >
-                    PDF
-                  </button>
-                  <button
-                    type="button"
-                    className="text-xs text-green-700 hover:underline"
-                    onClick={async () => {
-                      const { url } = await getWhatsappLink(payment.id);
-                      window.open(url, "_blank", "noopener,noreferrer");
-                    }}
-                  >
-                    WhatsApp
-                  </button>
-                </div>
-              </li>
-            ))}
+            {payments.data.items.map((payment, index) => {
+              // Solo el pago mas reciente y aplicado puede anularse.
+              const isLatestApplied =
+                index === 0 && payment.status === "aplicado";
+
+              return (
+                <li key={payment.id} className="py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    <div>
+                      <p className="font-medium text-slate-900">
+                        {formatCurrency(payment.amount)}{" "}
+                        <span className="font-normal text-slate-500">
+                          · {PAYMENT_METHOD_LABELS[payment.method]}
+                        </span>
+                      </p>
+                      <p className="tabular text-xs text-slate-500">
+                        {payment.folio} · {formatDateTime(payment.created_at)}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <Badge
+                        className={
+                          payment.status === "aplicado"
+                            ? "bg-green-100 text-green-800"
+                            : "bg-slate-100 text-slate-600"
+                        }
+                      >
+                        {payment.status === "aplicado" ? "Aplicado" : "Anulado"}
+                      </Badge>
+                      <button
+                        type="button"
+                        className="text-xs text-brand-700 hover:underline"
+                        onClick={() => downloadReceipt(payment.id, payment.folio)}
+                      >
+                        PDF
+                      </button>
+                      <button
+                        type="button"
+                        className="text-xs text-green-700 hover:underline"
+                        onClick={async () => {
+                          const { url } = await getWhatsappLink(payment.id);
+                          window.open(url, "_blank", "noopener,noreferrer");
+                        }}
+                      >
+                        WhatsApp
+                      </button>
+                      {isLatestApplied && (
+                        <button
+                          type="button"
+                          className="text-xs text-red-600 hover:underline"
+                          onClick={() => setCancellingPayment(payment.id)}
+                        >
+                          Anular
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {cancellingPayment === payment.id && (
+                    <div className="mt-3">
+                      <CancelPaymentForm
+                        paymentId={payment.id}
+                        folio={payment.folio}
+                        amount={payment.amount}
+                        onDone={() => setCancellingPayment(null)}
+                        onCancel={() => setCancellingPayment(null)}
+                      />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </Card>
