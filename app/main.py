@@ -1,6 +1,10 @@
 """Punto de entrada de la API de Credigest."""
 
-from fastapi import FastAPI
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, HTTPException, status
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
@@ -13,6 +17,7 @@ from app.api.v1.payments import router as payments_router
 from app.api.v1.routes import router as routes_router
 from app.api.v1.users import router as users_router, settings_router
 from app.core.config import get_settings
+from app.db.session import get_session
 
 settings = get_settings()
 
@@ -40,3 +45,18 @@ app.include_router(users_router, prefix="/api/v1")
 async def health() -> dict[str, str]:
     """Verifica que la API este en linea."""
     return {"status": "ok"}
+
+
+@app.get("/health/db", tags=["salud"])
+async def health_db(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict[str, str]:
+    """Verifica la conectividad con PostgreSQL (02-arquitectura.md §11)."""
+    try:
+        await session.execute(text("SELECT 1"))
+    except Exception as exc:  # pragma: no cover - fallo de infraestructura
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Base de datos no disponible.",
+        ) from exc
+    return {"status": "ok", "database": "ok"}

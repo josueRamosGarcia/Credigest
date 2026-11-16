@@ -53,6 +53,11 @@ const SettingsPage = lazy(() =>
     default: module.SettingsPage,
   })),
 );
+const ComparatorPage = lazy(() =>
+  import("@/pages/ComparatorPage").then((module) => ({
+    default: module.ComparatorPage,
+  })),
+);
 
 /** Envuelve una pantalla con un indicador mientras se descarga su codigo. */
 function Page({ children }: { children: ReactNode }) {
@@ -183,6 +188,17 @@ export function AppRoutes() {
             <RequireRole roles={["prestamista"]}>
               <Page>
                 <PaymentsPage />
+              </Page>
+            </RequireRole>
+          }
+        />
+
+        <Route
+          path="comparador"
+          element={
+            <RequireRole roles={["prestamista"]}>
+              <Page>
+                <ComparatorPage />
               </Page>
             </RequireRole>
           }

@@ -24,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/clientes", label: "Clientes", icon: "◍", roles: ["prestamista"] },
   { to: "/prestamos", label: "Préstamos", icon: "▤", roles: ["prestamista"] },
   { to: "/pagos", label: "Pagos", icon: "◫", roles: ["prestamista"] },
+  { to: "/comparador", label: "Comparador", icon: "⇄", roles: ["prestamista"] },
   { to: "/rutas", label: "Rutas de cobro", icon: "◈", roles: ["cobrador"] },
   { to: "/auditoria", label: "Auditoría", icon: "◉", roles: ["admin"] },
   { to: "/configuracion", label: "Configuración", icon: "⚙", roles: ["admin"] },

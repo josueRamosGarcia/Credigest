@@ -1,7 +1,9 @@
 /** Dashboard financiero: indicadores, antigüedad y cobranza. */
 
 import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 
+import { downloadFile } from "@/api/client";
 import {
   AGING_LABELS,
   getAging,
@@ -9,7 +11,7 @@ import {
   getSummary,
 } from "@/api/dashboard";
 import { Card, EmptyState, ErrorState, PageHeader, Spinner, StatCard } from "@/components/ui";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { formatCurrency, formatDate, todayIso } from "@/lib/format";
 
 /** Barra horizontal simple para el aging. */
 function AgingBar({
@@ -45,9 +47,17 @@ function AgingBar({
 }
 
 export function DashboardPage() {
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [exporting, setExporting] = useState(false);
+
   const summary = useQuery({
-    queryKey: ["dashboard", "summary"],
-    queryFn: () => getSummary(),
+    queryKey: ["dashboard", "summary", { fromDate, toDate }],
+    queryFn: () =>
+      getSummary({
+        from_date: fromDate || undefined,
+        to_date: toDate || undefined,
+      }),
   });
 
   const aging = useQuery({
@@ -56,9 +66,29 @@ export function DashboardPage() {
   });
 
   const collections = useQuery({
-    queryKey: ["dashboard", "collections"],
-    queryFn: () => getCollections(),
+    queryKey: ["dashboard", "collections", { fromDate, toDate }],
+    queryFn: () =>
+      getCollections({
+        from_date: fromDate || undefined,
+        to_date: toDate || undefined,
+      }),
   });
+
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const query = new URLSearchParams();
+      if (fromDate) query.set("from_date", fromDate);
+      if (toDate) query.set("to_date", toDate);
+      const suffix = query.toString() ? `?${query.toString()}` : "";
+      await downloadFile(
+        `/dashboard/export.csv${suffix}`,
+        `dashboard-${todayIso()}.csv`,
+      );
+    } finally {
+      setExporting(false);
+    }
+  };
 
   if (summary.isLoading) return <Spinner label="Calculando indicadores…" />;
 
@@ -88,7 +118,60 @@ export function DashboardPage() {
       <PageHeader
         title="Dashboard financiero"
         description="Estado de la cartera y resultado del negocio."
+        actions={
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={exporting}
+            onClick={() => void handleExportCsv()}
+          >
+            {exporting ? "Exportando…" : "Exportar CSV"}
+          </button>
+        }
       />
+
+      <div className="mb-5 flex flex-wrap items-end gap-3">
+        <div>
+          <label htmlFor="dash-from" className="label">
+            Desde
+          </label>
+          <input
+            id="dash-from"
+            type="date"
+            className="input"
+            value={fromDate}
+            onChange={(e) => setFromDate(e.target.value)}
+          />
+        </div>
+        <div>
+          <label htmlFor="dash-to" className="label">
+            Hasta
+          </label>
+          <input
+            id="dash-to"
+            type="date"
+            className="input"
+            value={toDate}
+            onChange={(e) => setToDate(e.target.value)}
+          />
+        </div>
+        {(fromDate || toDate) && (
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => {
+              setFromDate("");
+              setToDate("");
+            }}
+          >
+            Limpiar fechas
+          </button>
+        )}
+        <p className="text-xs text-slate-500">
+          El filtro de fechas aplica por fecha de inicio para colocación y por
+          fecha de registro para cobranza (RN-48).
+        </p>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard

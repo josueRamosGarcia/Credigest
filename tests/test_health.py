@@ -14,3 +14,12 @@ async def test_health_returns_ok() -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+@pytest.mark.db
+async def test_health_db_returns_ok(api_client: AsyncClient) -> None:
+    response = await api_client.get("/health/db")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "database": "ok"}
+
