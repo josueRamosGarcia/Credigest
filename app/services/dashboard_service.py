@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.domain.money import round_money
+from app.models.collection_route import CollectionRoute, CollectionRouteItem
 from app.models.loan import Installment, Loan
 from app.models.payment import Payment, PaymentApplication
 
@@ -101,13 +102,40 @@ def _to_decimal(value: Decimal | int | float | None) -> Decimal:
     return round_money(Decimal(str(value)))
 
 
+def _loan_scope_conditions(
+    tenant_id: UUID,
+    prestamista_id: UUID | None = None,
+    route_id: UUID | None = None,
+) -> list[Any]:
+    """Condiciones de alcance para prestamos segun filtros (RF-42)."""
+    conditions: list[Any] = [Loan.tenant_id == tenant_id]
+    if prestamista_id is not None:
+        conditions.append(Loan.lender_id == prestamista_id)
+    if route_id is not None:
+        route_loans = (
+            select(CollectionRouteItem.loan_id)
+            .join(
+                CollectionRoute,
+                CollectionRoute.id == CollectionRouteItem.route_id,
+            )
+            .where(
+                CollectionRoute.tenant_id == tenant_id,
+                CollectionRoute.id == route_id,
+            )
+        )
+        conditions.append(Loan.id.in_(route_loans))
+    return conditions
+
+
 def _payments_in_range(
     tenant_id: UUID,
     from_date: date | None,
     to_date: date | None,
+    prestamista_id: UUID | None = None,
+    route_id: UUID | None = None,
 ) -> Select[Any]:
-    """Subconsulta con los pagos aplicados del tenant en el rango (RN-49)."""
-    conditions = [
+    """Subconsulta con los pagos aplicados del tenant en el rango (RN-49, RF-42)."""
+    conditions: list[Any] = [
         Payment.tenant_id == tenant_id,
         Payment.status == "aplicado",
     ]
@@ -115,6 +143,11 @@ def _payments_in_range(
         conditions.append(local_date(Payment.created_at) >= from_date)
     if to_date is not None:
         conditions.append(local_date(Payment.created_at) <= to_date)
+    if prestamista_id is not None or route_id is not None:
+        loan_ids = select(Loan.id).where(
+            *_loan_scope_conditions(tenant_id, prestamista_id, route_id)
+        )
+        conditions.append(Payment.loan_id.in_(loan_ids))
 
     return select(Payment.id).where(*conditions)
 
@@ -125,9 +158,13 @@ async def _sum_applications(
     concept: str,
     from_date: date | None,
     to_date: date | None,
+    prestamista_id: UUID | None = None,
+    route_id: UUID | None = None,
 ) -> Decimal:
     """Suma lo aplicado a un concepto en los pagos del rango."""
-    payments = _payments_in_range(tenant_id, from_date, to_date).subquery()
+    payments = _payments_in_range(
+        tenant_id, from_date, to_date, prestamista_id, route_id
+    ).subquery()
 
     total = await session.scalar(
         select(func.coalesce(func.sum(PaymentApplication.amount), 0)).where(
@@ -143,10 +180,12 @@ async def _sum_principal_placed(
     tenant_id: UUID,
     from_date: date | None,
     to_date: date | None,
+    prestamista_id: UUID | None = None,
+    route_id: UUID | None = None,
 ) -> Decimal:
     """Capital colocado en el rango, excluyendo prestamos cancelados (RN-48)."""
     conditions = [
-        Loan.tenant_id == tenant_id,
+        *_loan_scope_conditions(tenant_id, prestamista_id, route_id),
         Loan.status != "cancelado",
     ]
     if from_date is not None:
@@ -161,13 +200,18 @@ async def _sum_principal_placed(
 
 
 async def _portfolio(
-    session: AsyncSession, tenant_id: UUID, today: date
+    session: AsyncSession,
+    tenant_id: UUID,
+    today: date,
+    prestamista_id: UUID | None = None,
+    route_id: UUID | None = None,
 ) -> tuple[Decimal, Decimal]:
     """Devuelve (cartera total pendiente, cartera vencida).
 
     La cartera total es todo lo que falta cobrar de prestamos vigentes. La
     vencida es la parte cuya fecha ya paso (RN-47, RN-51).
     """
+    scope = _loan_scope_conditions(tenant_id, prestamista_id, route_id)
     total = await session.scalar(
         select(
             func.coalesce(
@@ -178,7 +222,7 @@ async def _portfolio(
         .select_from(Installment)
         .join(Loan, Loan.id == Installment.loan_id)
         .where(
-            Loan.tenant_id == tenant_id,
+            *scope,
             Loan.status.in_(ACTIVE_LOAN_STATUSES),
             Installment.status.in_(("pendiente", "parcial", "vencida")),
         )
@@ -194,7 +238,7 @@ async def _portfolio(
         .select_from(Installment)
         .join(Loan, Loan.id == Installment.loan_id)
         .where(
-            Loan.tenant_id == tenant_id,
+            *scope,
             Loan.status.in_(ACTIVE_LOAN_STATUSES),
             Installment.status.in_(("pendiente", "parcial", "vencida")),
             Installment.due_date < today,
@@ -205,12 +249,15 @@ async def _portfolio(
 
 
 async def _loan_counts(
-    session: AsyncSession, tenant_id: UUID
+    session: AsyncSession,
+    tenant_id: UUID,
+    prestamista_id: UUID | None = None,
+    route_id: UUID | None = None,
 ) -> tuple[int, int, int]:
     """Cuenta prestamos activos, pagados y vencidos."""
     rows = await session.execute(
         select(Loan.status, func.count())
-        .where(Loan.tenant_id == tenant_id)
+        .where(*_loan_scope_conditions(tenant_id, prestamista_id, route_id))
         .group_by(Loan.status)
     )
     counts = {status: int(count) for status, count in rows.all()}
@@ -228,15 +275,19 @@ async def summary(
     *,
     from_date: date | None = None,
     to_date: date | None = None,
+    prestamista_id: UUID | None = None,
+    route_id: UUID | None = None,
     today: date | None = None,
 ) -> DashboardSummary:
-    """Calcula los indicadores principales (RN-47).
+    """Calcula los indicadores principales (RN-47, RF-42).
 
     Args:
         session: Sesion de base de datos.
         tenant_id: Financiera cuyos indicadores se calculan.
         from_date: Inicio del rango para colocacion y cobranza.
         to_date: Fin del rango.
+        prestamista_id: Filtra por el prestamista que coloco el credito.
+        route_id: Filtra por los prestamos incluidos en una ruta de cobro.
         today: Fecha de corte para la cartera vencida.
 
     Returns:
@@ -244,17 +295,27 @@ async def summary(
     """
     reference = today or date.today()
 
-    capital_prestado = await _sum_principal_placed(session, tenant_id, from_date, to_date)
-    capital_recuperado = await _sum_applications(
-        session, tenant_id, "capital", from_date, to_date
+    capital_prestado = await _sum_principal_placed(
+        session, tenant_id, from_date, to_date, prestamista_id, route_id
     )
-    intereses = await _sum_applications(session, tenant_id, "interes", from_date, to_date)
-    mora = await _sum_applications(session, tenant_id, "mora", from_date, to_date)
+    capital_recuperado = await _sum_applications(
+        session, tenant_id, "capital", from_date, to_date, prestamista_id, route_id
+    )
+    intereses = await _sum_applications(
+        session, tenant_id, "interes", from_date, to_date, prestamista_id, route_id
+    )
+    mora = await _sum_applications(
+        session, tenant_id, "mora", from_date, to_date, prestamista_id, route_id
+    )
 
-    cartera_total, cartera_vencida = await _portfolio(session, tenant_id, reference)
+    cartera_total, cartera_vencida = await _portfolio(
+        session, tenant_id, reference, prestamista_id, route_id
+    )
     capital_proyectado = round_money(max(Decimal("0.00"), cartera_total))
 
-    activos, pagados, vencidos = await _loan_counts(session, tenant_id)
+    activos, pagados, vencidos = await _loan_counts(
+        session, tenant_id, prestamista_id, route_id
+    )
 
     if cartera_total > 0:
         morosidad = round_money(cartera_vencida / cartera_total * Decimal(100))

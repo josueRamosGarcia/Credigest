@@ -619,3 +619,99 @@ class TestInternalHelpers:
     def test_bucket_fallback(self) -> None:
         """Un atraso fuera de las franjas cae en mas_90."""
         assert dashboard_service._bucket_for(9999) == "mas_90"
+
+
+class TestDashboardExportFiltersAndLateFeeAccrual:
+    """RF-42, RF-44 y RN-20: filtros adicionales, exportacion CSV y cierre diario."""
+
+    async def test_filters_summary_by_prestamista(
+        self, api_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """RF-42: filtra los indicadores por prestamista."""
+        tenant, admin = await _setup(db_session)
+        other_lender = User(
+            tenant_id=tenant.id,
+            full_name="Otro Prestamista",
+            email="lender2@test.mx",
+            password_hash=hash_password(PASSWORD),
+            role="prestamista",
+        )
+        db_session.add(other_lender)
+        await db_session.commit()
+
+        client = await _client(db_session, tenant)
+        await _loan(
+            db_session, tenant, client, admin,
+            principal="4000", start_date=TODAY,
+        )
+        await _loan(
+            db_session, tenant, client, other_lender,
+            principal="9000", start_date=TODAY,
+        )
+
+        headers = await _headers(api_client)
+        res = await api_client.get(
+            f"/api/v1/dashboard/summary?prestamista_id={other_lender.id}",
+            headers=headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["capital_prestado"] == "9000.00"
+
+    async def test_exports_csv_and_audits(
+        self, api_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """RF-44 y RN-64: exporta indicadores y aging en CSV y registra auditoria."""
+        tenant, user = await _setup(db_session)
+        client = await _client(db_session, tenant)
+        await _loan(
+            db_session, tenant, client, user,
+            principal="12000", start_date=TODAY,
+        )
+
+        headers = await _headers(api_client)
+        res = await api_client.get("/api/v1/dashboard/export.csv", headers=headers)
+
+        assert res.status_code == 200
+        assert "text/csv" in res.headers["content-type"]
+        assert "capital_prestado,12000.00" in res.text
+        assert "aging,al_dia" in res.text
+
+    async def test_accrue_late_fees_is_exact_and_idempotent(
+        self, api_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """RN-19 y RN-20: 1,000 con 10 dias de atraso, 5 de gracia y 10% mensual = 16.67."""
+        tenant, user = await _setup(db_session)
+        client = await _client(db_session, tenant)
+
+        due = TODAY - timedelta(days=10)
+        loan = await _loan(
+            db_session,
+            tenant,
+            client,
+            user,
+            principal="1000",
+            start_date=due - timedelta(days=30),
+            installments=[(due, "1000.00", "900.00", "100.00")],
+        )
+        loan.grace_days = 5
+        loan.late_fee_rate = Decimal("0.1000")
+        await db_session.commit()
+
+        headers = await _headers(api_client)
+        first = await api_client.post(
+            f"/api/v1/dashboard/accrue-late-fees?today={TODAY.isoformat()}",
+            headers=headers,
+        )
+        assert first.status_code == 200
+        assert first.json()["updated_installments"] == 1
+        assert first.json()["total_late_fee"] == "16.67"
+
+        # Segunda ejecucion el mismo dia: 0 actualizaciones, misma mora (idempotente).
+        second = await api_client.post(
+            f"/api/v1/dashboard/accrue-late-fees?today={TODAY.isoformat()}",
+            headers=headers,
+        )
+        assert second.status_code == 200
+        assert second.json()["updated_installments"] == 0
+        assert second.json()["total_late_fee"] == "16.67"
+
