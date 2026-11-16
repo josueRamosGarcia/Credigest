@@ -15,12 +15,12 @@ Reglas cubiertas:
 """
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,7 +32,7 @@ from app.domain.payment_application import (
     breakdown_by_concept,
     total_pending,
 )
-from app.models.collection_route import CollectionRouteItem
+from app.models.collection_route import CollectionRoute, CollectionRouteItem
 from app.models.loan import Installment, Loan
 from app.models.payment import Payment, PaymentApplication
 from app.models.tenant import Tenant
@@ -78,6 +78,7 @@ class PaymentOutcome:
     covered_late_fee: Decimal
     covered_interest: Decimal
     covered_principal: Decimal
+    duplicate_warning: bool = False
 
 
 def _to_state(installment: Installment) -> InstallmentState:
@@ -138,12 +139,61 @@ async def _next_folio(session: AsyncSession, tenant_id: UUID, today: date) -> st
     return f"PAGO-{label}-{today.year}-{consecutive:05d}"
 
 
+async def is_collector_assigned(
+    session: AsyncSession,
+    tenant_id: UUID,
+    cobrador_id: UUID,
+    loan_id: UUID,
+    client_id: UUID,
+) -> bool:
+    """Comprueba si el préstamo o su cliente están en una ruta del cobrador (RN-26, RF-38)."""
+    match = await session.scalar(
+        select(CollectionRouteItem.id)
+        .join(CollectionRoute, CollectionRoute.id == CollectionRouteItem.route_id)
+        .where(
+            CollectionRoute.tenant_id == tenant_id,
+            CollectionRoute.cobrador_id == cobrador_id,
+            or_(
+                CollectionRouteItem.loan_id == loan_id,
+                CollectionRouteItem.client_id == client_id,
+            ),
+        )
+        .limit(1)
+    )
+    return match is not None
+
+
+async def _has_recent_duplicate(
+    session: AsyncSession,
+    tenant_id: UUID,
+    loan_id: UUID,
+    registered_by: UUID,
+    amount: Decimal,
+) -> bool:
+    """Detecta un pago idéntico en los últimos 60 segundos (RN-28)."""
+    cutoff = datetime.now(UTC) - timedelta(seconds=60)
+    existing = await session.scalar(
+        select(Payment.id)
+        .where(
+            Payment.tenant_id == tenant_id,
+            Payment.loan_id == loan_id,
+            Payment.registered_by == registered_by,
+            Payment.amount == amount,
+            Payment.status == "aplicado",
+            Payment.created_at >= cutoff,
+        )
+        .limit(1)
+    )
+    return existing is not None
+
+
 async def register_payment(
     session: AsyncSession,
     tenant_id: UUID,
     registered_by: UUID,
     payload: PaymentCreate,
     *,
+    actor_role: str = "admin",
     today: date | None = None,
     ip_address: str | None = None,
     user_agent: str | None = None,
@@ -155,6 +205,7 @@ async def register_payment(
         tenant_id: Financiera del usuario.
         registered_by: Usuario que registra el pago.
         payload: Datos validados por Pydantic.
+        actor_role: Rol del usuario que ejecuta la operacion.
         today: Fecha de negocio; se inyecta en pruebas.
 
     Returns:
@@ -163,6 +214,7 @@ async def register_payment(
     Raises:
         PaymentError: Si el prestamo no existe, no admite pagos o el monto
             excede el saldo.
+        NotAuthorizedToCollectError: Si es cobrador y el cliente no esta en su ruta.
     """
     business_date = today or date.today()
 
@@ -176,6 +228,15 @@ async def register_payment(
     if loan is None:
         raise PaymentError("El prestamo no existe.")
 
+    if actor_role == "cobrador":
+        assigned = await is_collector_assigned(
+            session, tenant_id, registered_by, loan.id, loan.client_id
+        )
+        if not assigned:
+            raise NotAuthorizedToCollectError(
+                "No tienes asignado este cliente o prestamo en tus rutas de cobro."
+            )
+
     if loan.status in {"cancelado", "pagado"}:
         raise LoanNotPayableError(
             f"Un prestamo en estado '{loan.status}' no admite pagos."
@@ -188,6 +249,10 @@ async def register_payment(
         raise PaymentExceedsBalanceError(
             f"El monto excede el saldo pendiente del prestamo ({available:.2f})."
         )
+
+    is_duplicate = await _has_recent_duplicate(
+        session, tenant_id, loan.id, registered_by, payload.amount
+    )
 
     try:
         allocation = allocate_payment(states, payload.amount)
@@ -278,6 +343,7 @@ async def register_payment(
         covered_late_fee=covered[Concept.MORA],
         covered_interest=covered[Concept.INTERES],
         covered_principal=covered[Concept.CAPITAL],
+        duplicate_warning=is_duplicate,
     )
 
 

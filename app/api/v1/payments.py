@@ -80,9 +80,14 @@ async def register_payment(
             context.tenant_id,
             context.user.id,
             payload,
+            actor_role=context.role,
             ip_address=meta.ip_address,
             user_agent=meta.user_agent,
         )
+    except payment_service.NotAuthorizedToCollectError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
+        ) from exc
     except payment_service.LoanNotPayableError as exc:
         raise _conflict(str(exc)) from exc
     except payment_service.PaymentExceedsBalanceError as exc:
@@ -97,6 +102,7 @@ async def register_payment(
         covered_late_fee=outcome.covered_late_fee,
         covered_interest=outcome.covered_interest,
         covered_principal=outcome.covered_principal,
+        duplicate_warning=outcome.duplicate_warning,
     )
 
 

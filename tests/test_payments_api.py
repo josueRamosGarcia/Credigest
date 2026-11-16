@@ -817,3 +817,64 @@ class TestDomainEdgeCases:
 
         assert inside.json()["total"] == 1
         assert past.json()["total"] == 0
+
+
+class TestCollectorIsolationAndDuplicates:
+    """RF-38, RN-26 y RN-28: aislamiento del cobrador y deteccion de duplicados."""
+
+    async def test_collector_outside_route_gets_403_on_loan_and_payment(
+        self, api_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        tenant, _, client = await _setup(db_session)
+        admin_headers = await _headers(api_client)
+        loan = await _create_loan(api_client, admin_headers, client.id)
+
+        collector = User(
+            tenant_id=tenant.id,
+            full_name="Cobrador Sin Ruta",
+            email="cobrador@test.mx",
+            password_hash=hash_password(PASSWORD),
+            role="cobrador",
+        )
+        db_session.add(collector)
+        await db_session.commit()
+        collector_headers = await _headers(api_client, "cobrador@test.mx")
+
+        # RF-38: peticion directa al prestamo fuera de su ruta -> 403
+        res_loan = await api_client.get(
+            f"/api/v1/loans/{loan['id']}", headers=collector_headers
+        )
+        assert res_loan.status_code == 403
+
+        # RN-26: registrar pago fuera de su ruta -> 403
+        res_pay = await api_client.post(
+            "/api/v1/payments",
+            json={"loan_id": loan["id"], "amount": 200, "method": "efectivo"},
+            headers=collector_headers,
+        )
+        assert res_pay.status_code == 403
+
+    async def test_duplicate_payment_within_60s_sets_warning_flag(
+        self, api_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """RN-28: dos pagos identicos seguidos activan duplicate_warning."""
+        _, _, client = await _setup(db_session)
+        headers = await _headers(api_client)
+        loan = await _create_loan(api_client, headers, client.id)
+
+        first = await api_client.post(
+            "/api/v1/payments",
+            json={"loan_id": loan["id"], "amount": 250, "method": "efectivo"},
+            headers=headers,
+        )
+        second = await api_client.post(
+            "/api/v1/payments",
+            json={"loan_id": loan["id"], "amount": 250, "method": "efectivo"},
+            headers=headers,
+        )
+
+        assert first.status_code == 201
+        assert first.json()["duplicate_warning"] is False
+        assert second.status_code == 201
+        assert second.json()["duplicate_warning"] is True
+

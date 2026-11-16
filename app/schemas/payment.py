@@ -97,6 +97,7 @@ class PaymentResult(BaseModel):
     covered_late_fee: Money
     covered_interest: Money
     covered_principal: Money
+    duplicate_warning: bool = False
 
 
 class PaymentListResponse(BaseModel):

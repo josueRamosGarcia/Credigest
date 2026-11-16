@@ -44,7 +44,7 @@ from app.schemas.loan import (
     SimulateRequest,
     SimulateResponse,
 )
-from app.services import audit_service, loan_service
+from app.services import audit_service, loan_service, payment_service
 
 router = APIRouter(prefix="/loans", tags=["prestamos"])
 
@@ -197,6 +197,12 @@ async def create_loan(
         HTTPException: 404 si el cliente no existe; 409 si esta inactivo o tiene
             atrasos graves.
     """
+    if context.role == "cobrador":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="El cobrador no puede aprobar prestamos.",
+        )
+
     try:
         meta = request_meta(request)
         loan = await loan_service.create_loan(
@@ -241,6 +247,16 @@ async def get_loan(
     except loan_service.LoanNotFoundError as exc:
         raise _not_found(str(exc)) from exc
 
+    if context.role == "cobrador":
+        assigned = await payment_service.is_collector_assigned(
+            session, context.tenant_id, context.user.id, loan.id, loan.client_id
+        )
+        if not assigned:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes acceso a prestamos fuera de tus rutas asignadas.",
+            )
+
     return LoanDetail.model_validate(loan)
 
 
@@ -263,6 +279,16 @@ async def get_schedule(
         loan = await loan_service.get_loan(session, context.tenant_id, loan_id)
     except loan_service.LoanNotFoundError as exc:
         raise _not_found(str(exc)) from exc
+
+    if context.role == "cobrador":
+        assigned = await payment_service.is_collector_assigned(
+            session, context.tenant_id, context.user.id, loan.id, loan.client_id
+        )
+        if not assigned:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes acceso a prestamos fuera de tus rutas asignadas.",
+            )
 
     terms = LoanTerms.create(
         principal=loan.principal,
@@ -377,6 +403,12 @@ async def cancel_loan(
     Raises:
         HTTPException: 404 si no existe; 409 si ya esta pagado o cancelado.
     """
+    if context.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo el Administrador puede cancelar un prestamo.",
+        )
+
     try:
         meta = request_meta(request)
         loan = await loan_service.cancel_loan(
