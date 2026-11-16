@@ -26,6 +26,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: "/pagos", label: "Pagos", icon: "◫", roles: ["prestamista"] },
   { to: "/rutas", label: "Rutas de cobro", icon: "◈", roles: ["cobrador"] },
   { to: "/auditoria", label: "Auditoría", icon: "◉", roles: ["admin"] },
+  { to: "/configuracion", label: "Configuración", icon: "⚙", roles: ["admin"] },
 ];
 
 export function AppLayout() {

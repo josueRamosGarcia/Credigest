@@ -48,6 +48,11 @@ const RouteDetailPage = lazy(() =>
 const AuditPage = lazy(() =>
   import("@/pages/AuditPage").then((module) => ({ default: module.AuditPage })),
 );
+const SettingsPage = lazy(() =>
+  import("@/pages/SettingsPage").then((module) => ({
+    default: module.SettingsPage,
+  })),
+);
 
 /** Envuelve una pantalla con un indicador mientras se descarga su codigo. */
 function Page({ children }: { children: ReactNode }) {
@@ -210,6 +215,17 @@ export function AppRoutes() {
             <RequireRole roles={["admin"]}>
               <Page>
                 <AuditPage />
+              </Page>
+            </RequireRole>
+          }
+        />
+
+        <Route
+          path="configuracion"
+          element={
+            <RequireRole roles={["admin"]}>
+              <Page>
+                <SettingsPage />
               </Page>
             </RequireRole>
           }
