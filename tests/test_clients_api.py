@@ -729,3 +729,53 @@ class TestStatusFilter:
         assert activos.json()["total"] == 1
         assert inactivos.json()["total"] == 1
         assert inactivos.json()["items"][0]["full_name"] == "Maria Lopez Perez"
+
+
+class TestClientPlanLimitsAndAnonymization:
+    """RN-68, RN-69 y RN-70: limites por plan y anonimizacion."""
+
+    async def test_blocks_when_active_clients_reach_plan_limit(
+        self,
+        api_client: AsyncClient,
+        db_session: AsyncSession,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """RN-68: al alcanzar el tope de clientes activos se rechaza con 409."""
+        monkeypatch.setitem(client_service.CLIENT_PLAN_LIMITS, "basico", 1)
+        await _make_tenant_user(db_session)
+        headers = await _auth_headers(api_client)
+
+        first = await api_client.post("/api/v1/clients", json=VALID_CLIENT, headers=headers)
+        assert first.status_code == 201
+
+        second = await api_client.post(
+            "/api/v1/clients",
+            json={**VALID_CLIENT, "curp": CURP_JUAN, "full_name": "Juan Garcia"},
+            headers=headers,
+        )
+        assert second.status_code == 409
+        assert "plan" in second.json()["detail"].lower()
+
+    async def test_anonymizes_client_and_removes_personal_data(
+        self, api_client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """RN-70: anonimiza datos personales, borra referencias y desactiva."""
+        await _make_tenant_user(db_session)
+        headers = await _auth_headers(api_client)
+
+        created = await api_client.post("/api/v1/clients", json=VALID_CLIENT, headers=headers)
+        client_id = created.json()["id"]
+
+        res = await api_client.post(
+            f"/api/v1/clients/{client_id}/anonymize", headers=headers
+        )
+        assert res.status_code == 200
+        body = res.json()
+
+        assert body["full_name"].startswith("CLIENTE ANONIMIZADO")
+        assert body["curp"].startswith("ANON")
+        assert body["phone"] == "0000000000"
+        assert body["address"] == "DATOS ANONIMIZADOS"
+        assert body["status"] == "inactivo"
+        assert body["references"] == []
+

@@ -7,17 +7,25 @@ filtro obligatorio por tenant.
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.domain.validation import parse_curp
 from app.models.client import Client, ClientDocument, ClientReference
+from app.models.tenant import Tenant
 from app.schemas.client import ClientCreate, ClientUpdate
 from app.services import audit_service
 
 #: Tamano maximo de pagina para evitar consultas gigantes.
 MAX_PAGE_SIZE = 100
+
+#: Limite de clientes activos por plan (RN-68).
+CLIENT_PLAN_LIMITS: dict[str, int | None] = {
+    "basico": 50,
+    "profesional": 200,
+    "empresarial": None,
+}
 
 
 class ClientError(Exception):
@@ -34,6 +42,34 @@ class ClientNotFoundError(ClientError):
 
 class ClientHasHistoryError(ClientError):
     """El cliente tiene historial y no puede eliminarse (RN-57)."""
+
+
+class ClientPlanLimitError(ClientError):
+    """Se alcanzo el limite de clientes activos del plan (RN-68)."""
+
+
+async def _enforce_client_plan_limit(
+    session: AsyncSession, tenant_id: UUID
+) -> None:
+    """Verifica que el tenant no supere el limite de clientes activos (RN-68)."""
+    tenant = await session.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if tenant is None:
+        return
+
+    limit = CLIENT_PLAN_LIMITS.get(tenant.plan)
+    if limit is None:
+        return
+
+    active_count = await session.scalar(
+        select(func.count())
+        .select_from(Client)
+        .where(Client.tenant_id == tenant_id, Client.status == "activo")
+    )
+    if int(active_count or 0) >= limit:
+        raise ClientPlanLimitError(
+            f"Tu plan '{tenant.plan}' permite hasta {limit} clientes activos. "
+            "Sube de plan para registrar mas clientes."
+        )
 
 
 async def get_client(session: AsyncSession, tenant_id: UUID, client_id: UUID) -> Client:
@@ -147,7 +183,10 @@ async def create_client(
 
     Raises:
         DuplicateCurpError: Si la CURP ya existe en el tenant (RN-56).
+        ClientPlanLimitError: Si se alcanzo el limite del plan (RN-68).
     """
+    await _enforce_client_plan_limit(session, tenant_id)
+
     existing = await session.scalar(
         select(Client.id).where(Client.tenant_id == tenant_id, Client.curp == payload.curp)
     )
@@ -258,6 +297,9 @@ async def change_status(
     Desactivar impide crear prestamos nuevos, pero conserva el historial.
     """
     client = await get_client(session, tenant_id, client_id)
+    if status == "activo" and client.status != "activo":
+        await _enforce_client_plan_limit(session, tenant_id)
+
     previous = client.status
     client.status = status
 
@@ -389,3 +431,65 @@ async def remove_document(
     await session.commit()
 
     return file_key
+
+
+async def anonymize_client(
+    session: AsyncSession,
+    tenant_id: UUID,
+    client_id: UUID,
+    *,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+) -> tuple[Client, list[str]]:
+    """Anonimiza los datos personales de un cliente a solicitud del titular (RN-70).
+
+    Reemplaza nombre, CURP, telefono y direccion por valores seudonimos,
+    desactiva el registro y elimina referencias y documentos. La bitacora
+    conserva unicamente identificadores internos.
+
+    Returns:
+        Tupla `(cliente, file_keys)` para que el llamador elimine los archivos
+        fisicos del almacenamiento.
+    """
+    client = await get_client(session, tenant_id, client_id)
+
+    docs = await list_documents(session, tenant_id, client_id)
+    file_keys = [doc.file_key for doc in docs]
+
+    await session.execute(
+        delete(ClientReference).where(ClientReference.client_id == client.id)
+    )
+    await session.execute(
+        delete(ClientDocument).where(ClientDocument.client_id == client.id)
+    )
+
+    pseudonym_curp = f"ANON{client.id.hex[:14].upper()}"
+    client.full_name = f"CLIENTE ANONIMIZADO {client.id.hex[:6].upper()}"
+    client.curp = pseudonym_curp
+    client.phone = "0000000000"
+    client.address = "DATOS ANONIMIZADOS"
+    client.zone = None
+    client.birth_date = None
+    client.notes = None
+    client.status = "inactivo"
+
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=actor_id,
+        action="client.anonymize",
+        entity="client",
+        entity_id=client.id,
+        after={
+            "anonymized": True,
+            "removed_documents": len(file_keys),
+            "status": "inactivo",
+        },
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
+    await session.commit()
+    return await get_client_detail(session, tenant_id, client.id), file_keys
+

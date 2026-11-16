@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import CurrentUserDep
 from app.core.request_meta import request_meta
+from app.core.storage import get_storage
 from app.db.session import get_session
 from app.schemas.client import (
     ClientCreate,
@@ -114,6 +115,11 @@ async def create_client(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
+    except client_service.ClientPlanLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
     return ClientDetail.model_validate(client)
 
@@ -206,8 +212,56 @@ async def change_status(
         )
     except client_service.ClientNotFoundError as exc:
         raise _not_found() from exc
+    except client_service.ClientPlanLimitError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
     return ClientRead.model_validate(client)
+
+
+@router.post(
+    "/{client_id}/anonymize",
+    response_model=ClientDetail,
+    summary="Anonimizar datos personales del cliente",
+    description=(
+        "Reemplaza los datos personales por valores seudonimos y elimina "
+        "referencias y documentos a solicitud del titular (RNF-25, RN-70). "
+        "Reservado al Administrador."
+    ),
+)
+async def anonymize_client(
+    client_id: UUID,
+    context: CurrentUserDep,
+    session: SessionDep,
+    request: Request,
+) -> ClientDetail:
+    """Anonimiza un cliente y borra sus documentos fisicos."""
+    if context.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo el Administrador puede anonimizar datos personales.",
+        )
+
+    try:
+        meta = request_meta(request)
+        client, file_keys = await client_service.anonymize_client(
+            session,
+            context.tenant_id,
+            client_id,
+            actor_id=context.user.id,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
+        )
+    except client_service.ClientNotFoundError as exc:
+        raise _not_found() from exc
+
+    storage = get_storage()
+    for key in file_keys:
+        storage.delete(key)
+
+    return ClientDetail.model_validate(client)
 
 
 @router.post(
