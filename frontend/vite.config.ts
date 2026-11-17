@@ -14,6 +14,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    allowedHosts: true,
     // El frontend llama a /api y Vite lo reenvia al backend. Asi no hay
     // problemas de CORS en desarrollo.
     proxy: {

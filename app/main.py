@@ -15,7 +15,8 @@ from app.api.v1.documents import router as documents_router
 from app.api.v1.loans import router as loans_router
 from app.api.v1.payments import router as payments_router
 from app.api.v1.routes import router as routes_router
-from app.api.v1.users import router as users_router, settings_router
+from app.api.v1.users import router as users_router
+from app.api.v1.users import settings_router
 from app.core.config import get_settings
 from app.db.session import get_session
 

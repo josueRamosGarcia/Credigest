@@ -60,6 +60,9 @@ class Client(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    #: Hash bcrypt del PIN de 6 digitos para el portal de consulta del cliente.
+    portal_pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     created_by: Mapped[UUID | None] = mapped_column(
         PgUUID(as_uuid=True),
         ForeignKey("users.id", ondelete="SET NULL"),
@@ -76,6 +79,11 @@ class Client(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         back_populates="client",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def has_portal_pin(self) -> bool:
+        """Indica si el cliente tiene un PIN activo para consultar su portal."""
+        return bool(self.portal_pin_hash)
 
     def __repr__(self) -> str:
         """Representacion de depuracion sin datos personales (RNF-09)."""

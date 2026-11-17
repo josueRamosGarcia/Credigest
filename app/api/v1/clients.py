@@ -24,6 +24,8 @@ from app.schemas.client import (
     ClientStatusChange,
     ClientUpdate,
     DocumentRead,
+    PortalPinResponse,
+    PortalPinSetRequest,
 )
 from app.services import client_service
 
@@ -311,3 +313,56 @@ async def list_documents(
         raise _not_found() from exc
 
     return [DocumentRead.model_validate(document) for document in documents]
+
+
+@router.post(
+    "/{client_id}/portal-pin",
+    response_model=PortalPinResponse,
+    summary="Generar o actualizar PIN del portal del cliente",
+    description=(
+        "Genera o asigna un PIN de 6 digitos para que el cliente consulte "
+        "sus prestamos en el portal y devuelve un enlace de WhatsApp listo "
+        "para compartirselo."
+    ),
+)
+async def set_client_portal_pin(
+    client_id: UUID,
+    context: CurrentUserDep,
+    session: SessionDep,
+    request: Request,
+    payload: PortalPinSetRequest | None = None,
+) -> PortalPinResponse:
+    """Genera o asigna el PIN de 6 digitos del portal del cliente."""
+    if context.role == "cobrador":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo el Prestamista o el Administrador pueden gestionar el PIN del cliente.",
+        )
+
+    desired_pin = payload.pin if payload is not None else None
+    try:
+        meta = request_meta(request)
+        client, raw_pin = await client_service.set_portal_pin(
+            session,
+            context.tenant_id,
+            client_id,
+            pin=desired_pin,
+            actor_id=context.user.id,
+            ip_address=meta.ip_address,
+            user_agent=meta.user_agent,
+        )
+    except client_service.ClientNotFoundError as exc:
+        raise _not_found() from exc
+
+    whatsapp_url = client_service.build_portal_whatsapp_url(
+        client.phone,
+        context.tenant.name,
+        client.curp,
+        raw_pin,
+    )
+
+    return PortalPinResponse(
+        client_id=client.id,
+        pin=raw_pin,
+        whatsapp_url=whatsapp_url,
+    )

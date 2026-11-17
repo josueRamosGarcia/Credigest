@@ -4,13 +4,17 @@ Concentra las reglas de negocio: unicidad de CURP por tenant, borrado logico y
 filtro obligatorio por tenant.
 """
 
+import secrets
 from collections.abc import Sequence
+from urllib.parse import quote
 from uuid import UUID
 
+import bcrypt
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.security import BCRYPT_ROUNDS
 from app.domain.validation import parse_curp
 from app.models.client import Client, ClientDocument, ClientReference
 from app.models.tenant import Tenant
@@ -472,6 +476,7 @@ async def anonymize_client(
     client.zone = None
     client.birth_date = None
     client.notes = None
+    client.portal_pin_hash = None
     client.status = "inactivo"
 
     await audit_service.record(
@@ -492,4 +497,65 @@ async def anonymize_client(
 
     await session.commit()
     return await get_client_detail(session, tenant_id, client.id), file_keys
+
+
+def _hash_pin(pin: str) -> str:
+    """Genera el hash bcrypt de un PIN de 6 digitos (RNF-06)."""
+    return bcrypt.hashpw(
+        pin.encode("utf-8"), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+    ).decode("utf-8")
+
+
+def generate_portal_pin() -> str:
+    """Genera un PIN numerico aleatorio de 6 digitos."""
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def build_portal_whatsapp_url(
+    phone: str, tenant_name: str, curp: str, pin: str
+) -> str:
+    """Arma el enlace de WhatsApp con las instrucciones de acceso al portal."""
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    if len(digits) == 10:
+        digits = f"52{digits}"
+    message = (
+        f"Hola, *{tenant_name}* te comparte tu acceso para consultar el "
+        f"estado y avance de tus prestamos:\n"
+        f"- CURP: {curp}\n"
+        f"- PIN de 6 digitos: *{pin}*"
+    )
+    return f"https://wa.me/{digits}?text={quote(message)}"
+
+
+async def set_portal_pin(
+    session: AsyncSession,
+    tenant_id: UUID,
+    client_id: UUID,
+    *,
+    pin: str | None = None,
+    actor_id: UUID | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+) -> tuple[Client, str]:
+    """Asigna o genera un PIN de 6 digitos para el portal del cliente."""
+    client = await get_client(session, tenant_id, client_id)
+    chosen_pin = pin or generate_portal_pin()
+    client.portal_pin_hash = _hash_pin(chosen_pin)
+
+    await audit_service.record(
+        session,
+        tenant_id=tenant_id,
+        user_id=actor_id,
+        action="client.portal_pin_reset",
+        entity="client",
+        entity_id=client.id,
+        after={"portal_pin_configured": True},
+        ip_address=ip_address,
+        user_agent=user_agent,
+    )
+
+    await session.commit()
+    await session.refresh(client)
+    return client, chosen_pin
+
 

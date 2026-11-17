@@ -116,6 +116,7 @@ class ClientRead(BaseModel):
     birth_date: date | None
     status: str
     notes: str | None
+    has_portal_pin: bool = False
 
 
 class ClientDetail(ClientRead):
@@ -152,3 +153,21 @@ class DocumentRead(BaseModel):
     doc_type: str
     mime_type: str
     size_bytes: int
+
+
+class PortalPinSetRequest(BaseModel):
+    """Solicitud para asignar o generar un PIN de 6 digitos al cliente."""
+
+    pin: Annotated[
+        str | None,
+        Field(default=None, pattern=r"^\d{6}$", description="PIN opcional de 6 digitos."),
+    ] = None
+
+
+class PortalPinResponse(BaseModel):
+    """Respuesta con el PIN en claro (solo al momento de generarlo) y enlace de WhatsApp."""
+
+    client_id: UUID
+    pin: str
+    whatsapp_url: str
+

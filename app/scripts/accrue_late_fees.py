@@ -17,6 +17,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
@@ -62,7 +63,7 @@ async def accrue_late_fees(
     """Calcula y consolida la mora de las cuotas vencidas a la fecha `today`."""
     reference = today or date.today()
 
-    conditions = [Loan.status.in_(("activo", "vencido"))]
+    conditions: list[Any] = [Loan.status.in_(("activo", "vencido"))]
     if tenant_id is not None:
         conditions.append(Loan.tenant_id == tenant_id)
 
