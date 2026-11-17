@@ -1,17 +1,19 @@
 /** Detalle de un cliente: datos, referencias, préstamos y documentos. */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { changeClientStatus, getClient } from "@/api/clients";
-import { DocumentsSection } from "@/features/clients/DocumentsSection";
 import {
   LOAN_STATUS_LABELS,
   LOAN_STATUS_STYLES,
   listLoans,
   PERIOD_LABELS,
 } from "@/api/loans";
+import { type PortalPinResult, setClientPortalPin } from "@/api/portal";
 import {
+  Alert,
   Badge,
   Card,
   EmptyState,
@@ -19,6 +21,7 @@ import {
   PageHeader,
   Spinner,
 } from "@/components/ui";
+import { DocumentsSection } from "@/features/clients/DocumentsSection";
 import { formatCurrency, formatDate, formatRate } from "@/lib/format";
 
 export function ClientDetailPage() {
@@ -44,6 +47,25 @@ export function ClientDetailPage() {
     },
   });
 
+  const [pinResult, setPinResult] = useState<PortalPinResult | null>(null);
+  const [customPin, setCustomPin] = useState("");
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  const generatePinMutation = useMutation({
+    mutationFn: (desired?: string) => setClientPortalPin(id, desired),
+    onSuccess: (res) => {
+      setPinError(null);
+      setCustomPin("");
+      setPinResult(res);
+      void queryClient.invalidateQueries({ queryKey: ["clients", id] });
+    },
+    onError: (err) => {
+      setPinError(
+        err instanceof Error ? err.message : "No se pudo generar el PIN.",
+      );
+    },
+  });
+
   if (client.isLoading) return <Spinner />;
 
   if (client.isError || !client.data) {
@@ -59,7 +81,7 @@ export function ClientDetailPage() {
     );
   }
 
-  const data = client.data;
+  const data = client.data as typeof client.data & { has_portal_pin?: boolean };
   const isActive = data.status === "activo";
 
   return (
@@ -233,6 +255,106 @@ export function ClientDetailPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="mt-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold tracking-wide text-slate-700 uppercase">
+                Portal del cliente (CURP + PIN)
+              </h2>
+              <Badge
+                className={
+                  data.has_portal_pin || pinResult
+                    ? "bg-green-100 text-green-800"
+                    : "bg-slate-100 text-slate-600"
+                }
+              >
+                {data.has_portal_pin || pinResult
+                  ? "PIN configurado"
+                  : "Sin PIN asignado"}
+              </Badge>
+            </div>
+            <p className="mt-1 text-xs text-slate-500">
+              Genera un PIN de 6 dígitos para que {data.full_name} consulte el
+              avance de sus préstamos en{" "}
+              <Link
+                to="/mi-credito"
+                target="_blank"
+                className="font-medium text-brand-700 hover:underline"
+              >
+                /mi-credito
+              </Link>
+              .
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              placeholder="PIN opcional (6 dígitos)"
+              className="input w-44 text-xs"
+              value={customPin}
+              onChange={(e) => setCustomPin(e.target.value.replace(/\D/g, ""))}
+            />
+            <button
+              type="button"
+              className="btn-primary text-xs"
+              disabled={generatePinMutation.isPending}
+              onClick={() => {
+                if (customPin && customPin.length !== 6) {
+                  setPinError("Si defines un PIN manual debe tener 6 dígitos.");
+                  return;
+                }
+                generatePinMutation.mutate(customPin || undefined);
+              }}
+            >
+              {generatePinMutation.isPending
+                ? "Generando…"
+                : data.has_portal_pin
+                  ? "Regenerar PIN"
+                  : "Generar PIN"}
+            </button>
+          </div>
+        </div>
+
+        {pinError && (
+          <div className="mt-3">
+            <Alert tone="error">{pinError}</Alert>
+          </div>
+        )}
+
+        {pinResult && (
+          <div className="mt-4">
+            <Alert tone="warning">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-semibold">
+                    PIN de 6 dígitos activo para {data.full_name}:{" "}
+                    <code className="rounded bg-amber-100 px-2 py-0.5 font-mono text-base font-bold">
+                      {pinResult.pin}
+                    </code>
+                  </p>
+                  <p className="mt-1 text-xs">
+                    El cliente ingresa en <strong>/mi-credito</strong> con su
+                    CURP (<code>{data.curp}</code>) y este PIN.
+                  </p>
+                </div>
+                <a
+                  href={pinResult.whatsapp_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-primary text-xs"
+                >
+                  Enviar por WhatsApp
+                </a>
+              </div>
+            </Alert>
           </div>
         )}
       </Card>

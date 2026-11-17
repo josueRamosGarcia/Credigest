@@ -58,6 +58,11 @@ const ComparatorPage = lazy(() =>
     default: module.ComparatorPage,
   })),
 );
+const ClientPortalPage = lazy(() =>
+  import("@/pages/ClientPortalPage").then((module) => ({
+    default: module.ClientPortalPage,
+  })),
+);
 
 /** Envuelve una pantalla con un indicador mientras se descarga su codigo. */
 function Page({ children }: { children: ReactNode }) {
@@ -99,6 +104,14 @@ export function AppRoutes() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route
+        path="/mi-credito"
+        element={
+          <Page>
+            <ClientPortalPage />
+          </Page>
+        }
+      />
 
       <Route
         element={

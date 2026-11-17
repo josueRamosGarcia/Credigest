@@ -3,7 +3,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Navigate, Link, useLocation, useNavigate } from "react-router-dom";
 import { z } from "zod";
 
 import { useAuth } from "@/auth/useAuth";
@@ -114,6 +114,16 @@ export function LoginPage() {
         <p className="mt-6 text-center text-xs text-slate-500">
           ¿Olvidaste tu contraseña? Pide a tu administrador que la restablezca.
         </p>
+
+        <div className="mt-4 rounded-xl border border-slate-200 bg-white p-3 text-center text-xs text-slate-600">
+          ¿Eres cliente con un préstamo?{" "}
+          <Link
+            to="/mi-credito"
+            className="font-semibold text-brand-700 hover:underline"
+          >
+            Consulta tu estado de cuenta aquí →
+          </Link>
+        </div>
       </div>
     </div>
   );
