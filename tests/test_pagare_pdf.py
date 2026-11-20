@@ -29,7 +29,7 @@ from app.pdf.generator import (
 pytestmark = pytest.mark.db
 
 PASSWORD = "clave-segura-123"
-CURP = "LOPJ850312MDFZRN07"
+CURP = "LOPJ850312MDFZRN00"
 
 
 async def _setup(

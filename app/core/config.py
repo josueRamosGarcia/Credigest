@@ -2,14 +2,18 @@
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEV_JWT_SECRET = "credigest-desarrollo-cambiar-en-produccion-32b"
+_LOCAL_ENVIRONMENTS = frozenset({"local", "development", "dev", "test"})
 
 
 class Settings(BaseSettings):
     """Valores de configuracion del backend.
 
     Todos se pueden sobrescribir con variables de entorno o un archivo .env.
-    No se incluyen valores secretos por defecto.
+    No se incluyen valores secretos por defecto en produccion.
     """
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
@@ -23,8 +27,11 @@ class Settings(BaseSettings):
 
     #: Secreto para firmar los JWT. En produccion es obligatorio definirlo por
     #: variable de entorno. Debe tener al menos 32 bytes (RFC 7518 §3.2).
-    jwt_secret: str = "credigest-desarrollo-cambiar-en-produccion-32b"
+    jwt_secret: str = _DEV_JWT_SECRET
     jwt_algorithm: str = "HS256"
+
+    #: Origenes permitidos para CORS, separados por coma (ej. "https://app.credigest.mx").
+    cors_origins: str = ""
 
     #: Duracion del token de acceso y del de refresco (RNF-07).
     access_token_minutes: int = 15
@@ -36,6 +43,23 @@ class Settings(BaseSettings):
 
     #: Directorio donde se guardan los documentos de los clientes (RN-60).
     storage_dir: str = "storage"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Lista limpia de origenes CORS configurados."""
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @model_validator(mode="after")
+    def _validate_production_secret(self) -> "Settings":
+        """Impide arrancar fuera de entornos locales con el secreto por defecto."""
+        if (
+            self.environment.lower() not in _LOCAL_ENVIRONMENTS
+            and (self.jwt_secret == _DEV_JWT_SECRET or len(self.jwt_secret.encode("utf-8")) < 32)
+        ):
+            raise ValueError(
+                "En produccion es obligatorio definir JWT_SECRET con al menos 32 bytes."
+            )
+        return self
 
 
 @lru_cache

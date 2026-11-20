@@ -63,7 +63,7 @@ async def _client(session: AsyncSession, tenant: Tenant, name: str = "Cliente") 
     client = Client(
         tenant_id=tenant.id,
         full_name=name,
-        curp="LOPJ850312MDFZRN07",
+        curp="LOPJ850312MDFZRN00",
         phone="8711234567",
         address="Calle 1",
         zone="Centro",
@@ -573,7 +573,7 @@ class TestBucketFunction:
 class TestSummaryService:
     """Reglas verificadas en el servicio."""
 
-    async def test_projected_equals_total_portfolio(
+    async def test_projected_equals_pending_principal(
         self, db_session: AsyncSession
     ) -> None:
         tenant, user = await _setup(db_session)
@@ -586,7 +586,8 @@ class TestSummaryService:
 
         result = await dashboard_service.summary(db_session, tenant.id)
 
-        assert result.capital_proyectado == result.cartera_total == Decimal("1100.00")
+        assert result.capital_proyectado == Decimal("1000.00")
+        assert result.cartera_total == Decimal("1100.00")
 
     async def test_counts_loans_by_status(self, db_session: AsyncSession) -> None:
         tenant, user = await _setup(db_session)

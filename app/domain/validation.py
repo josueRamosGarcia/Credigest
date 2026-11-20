@@ -6,7 +6,7 @@ generar el pagare.
 
 Estructura (RN-55)::
 
-    LOPJ 850312 M DF ZRN 0 5
+    LOPJ 850312 M DF ZRN 0 0
     │    │      │ │  │   │ └─ digito verificador
     │    │      │ │  │   └─── homoclave (0-9 para 1900s, A-Z para 2000s)
     │    │      │ │  └─────── consonantes internas (3)
@@ -118,7 +118,7 @@ def curp_check_digit(first_seventeen: str) -> str:
     """Calcula el digito verificador de los primeros 17 caracteres.
 
     Algoritmo oficial del RENAPO: cada caracter toma su valor en el alfabeto y
-    se multiplica por un peso descendente de 17 a 1.
+    se multiplica por un peso descendente de 18 a 2.
 
     Args:
         first_seventeen: Los primeros 17 caracteres de la CURP.
@@ -134,12 +134,12 @@ def curp_check_digit(first_seventeen: str) -> str:
         raise CurpError("Se requieren exactamente 17 caracteres para el digito verificador.")
 
     total = 0
-    for position, char in enumerate(first_seventeen, start=1):
+    for index, char in enumerate(first_seventeen):
         try:
             value = _ALPHABET.index(char)
         except ValueError as exc:
             raise CurpError(f"Caracter no valido en la CURP: {char!r}.") from exc
-        total += value * (18 - position)
+        total += value * (18 - index)
 
     return str((10 - (total % 10)) % 10)
 

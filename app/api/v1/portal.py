@@ -153,6 +153,22 @@ async def portal_download_receipt(
 ) -> Response:
     """Permite al cliente descargar el comprobante PDF de un pago propio."""
     client_id, tenant_id = auth
+
+    client = await session.scalar(
+        select(Client).where(Client.id == client_id, Client.tenant_id == tenant_id)
+    )
+    tenant = await session.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    if (
+        client is None
+        or client.status != "activo"
+        or tenant is None
+        or not tenant.is_active
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="El perfil del cliente ya no esta disponible.",
+        )
+
     try:
         payment = await payment_service.get_payment(session, tenant_id, payment_id)
     except payment_service.PaymentNotFoundError as exc:
@@ -160,25 +176,24 @@ async def portal_download_receipt(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
 
+    if payment.status != "aplicado":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="El comprobante no esta disponible.",
+        )
+
     loan = await session.scalar(
         select(Loan).where(
             Loan.id == payment.loan_id,
             Loan.tenant_id == tenant_id,
             Loan.client_id == client_id,
+            Loan.status != "cancelado",
         )
     )
     if loan is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="El comprobante no pertenece a tu cuenta.",
-        )
-
-    client = await session.scalar(select(Client).where(Client.id == client_id))
-    tenant = await session.scalar(select(Tenant).where(Tenant.id == tenant_id))
-    if client is None or tenant is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="El cliente ya no existe.",
         )
 
     registered_by = None

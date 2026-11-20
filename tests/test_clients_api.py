@@ -16,8 +16,8 @@ from app.services import client_service
 pytestmark = pytest.mark.db
 
 PASSWORD = "clave-segura-123"
-CURP_MARIA = "LOPJ850312MDFZRN07"
-CURP_JUAN = "GALJ900715HJCMPR06"
+CURP_MARIA = "LOPJ850312MDFZRN00"
+CURP_JUAN = "GALJ900715HJCMPR04"
 
 VALID_CLIENT = {
     "full_name": "Maria Lopez Perez",
@@ -149,10 +149,10 @@ class TestCreateClient:
     @pytest.mark.parametrize(
         ("curp", "fragment"),
         [
-            ("LOPJ850312MDFZRN00", "digito verificador"),
+            ("LOPJ850312MDFZRN07", "digito verificador"),
             ("LOPJ850312MDFZRN", "18 caracteres"),
-            ("LOPJ850312MXXZRN07", "entidad"),
-            ("LOPJ850332MDFZRN07", "fecha"),
+            ("LOPJ850312MXXZRN00", "entidad"),
+            ("LOPJ850332MDFZRN00", "fecha"),
             ("NO-ES-CURP-VALIDA-X", "18 caracteres"),
         ],
     )

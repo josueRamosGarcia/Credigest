@@ -220,7 +220,7 @@ export function AppRoutes() {
         <Route
           path="rutas"
           element={
-            <RequireRole roles={["cobrador"]}>
+            <RequireRole roles={["prestamista", "cobrador"]}>
               <Page>
                 <RoutesPage />
               </Page>
@@ -230,7 +230,7 @@ export function AppRoutes() {
         <Route
           path="rutas/:id"
           element={
-            <RequireRole roles={["cobrador"]}>
+            <RequireRole roles={["prestamista", "cobrador"]}>
               <Page>
                 <RouteDetailPage />
               </Page>

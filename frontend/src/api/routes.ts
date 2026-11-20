@@ -1,7 +1,19 @@
 /** Llamadas de rutas de cobro. */
 
 import { request } from "./client";
-import type { Money, Paginated, RouteStatus, VisitStatus } from "./types";
+import type { Money, Paginated, Role, RouteStatus, VisitStatus } from "./types";
+
+export interface RouteCollector {
+  id: string;
+  full_name: string;
+  role: Role;
+}
+
+export interface RouteZoneOption {
+  zone: string;
+  active_clients: number;
+  pending_installments: number;
+}
 
 export interface RouteItem {
   id: string;
@@ -13,6 +25,9 @@ export interface RouteItem {
   notes: string | null;
   client_name: string;
   client_address: string;
+  client_neighborhood?: string | null;
+  client_latitude?: string | number | null;
+  client_longitude?: string | number | null;
   client_phone: string;
   installment_number: number;
   due_date: string;
@@ -24,12 +39,14 @@ export interface RouteItem {
 export interface Route {
   id: string;
   cobrador_id: string;
+  cobrador_name?: string | null;
   zone: string;
   route_date: string;
   status: RouteStatus;
   notes: string | null;
   total_items: number;
   pending_items: number;
+  paid_items?: number;
 }
 
 export interface RouteDetail extends Route {
@@ -49,6 +66,19 @@ export interface RouteListParams {
   cobrador_id?: string;
   page?: number;
   page_size?: number;
+}
+
+export async function listRouteZones(
+  routeDate?: string,
+): Promise<RouteZoneOption[]> {
+  const query = routeDate
+    ? `?route_date=${encodeURIComponent(routeDate)}`
+    : "";
+  return request<RouteZoneOption[]>(`/routes/zones${query}`);
+}
+
+export async function listRouteCollectors(): Promise<RouteCollector[]> {
+  return request<RouteCollector[]>("/routes/collectors");
 }
 
 export async function listRoutes(

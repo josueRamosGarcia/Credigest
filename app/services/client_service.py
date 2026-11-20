@@ -18,8 +18,12 @@ from app.core.security import BCRYPT_ROUNDS
 from app.domain.validation import parse_curp
 from app.models.client import Client, ClientDocument, ClientReference
 from app.models.tenant import Tenant
-from app.schemas.client import ClientCreate, ClientUpdate
+from app.schemas.client import ClientCreate, ClientUpdate, compose_address
 from app.services import audit_service
+
+_ADDRESS_PARTS = frozenset(
+    {"street", "exterior_number", "neighborhood", "postal_code", "city", "state"}
+)
 
 #: Tamano maximo de pagina para evitar consultas gigantes.
 MAX_PAGE_SIZE = 100
@@ -165,6 +169,21 @@ async def list_clients(
     return result.all(), int(total or 0)
 
 
+async def list_zones(session: AsyncSession, tenant_id: UUID) -> list[str]:
+    """Devuelve las zonas distintas registradas en los clientes de la financiera."""
+    rows = await session.scalars(
+        select(Client.zone)
+        .where(
+            Client.tenant_id == tenant_id,
+            Client.zone.is_not(None),
+            Client.zone != "",
+        )
+        .distinct()
+        .order_by(Client.zone)
+    )
+    return [zone for zone in rows.all() if zone]
+
+
 async def create_client(
     session: AsyncSession,
     tenant_id: UUID,
@@ -197,12 +216,21 @@ async def create_client(
     if existing is not None:
         raise DuplicateCurpError("Ya existe un cliente con esa CURP en esta financiera.")
 
+    assert payload.address is not None
     client = Client(
         tenant_id=tenant_id,
         full_name=payload.full_name,
         curp=payload.curp,
         phone=payload.phone,
         address=payload.address,
+        street=payload.street,
+        exterior_number=payload.exterior_number,
+        neighborhood=payload.neighborhood,
+        postal_code=payload.postal_code,
+        city=payload.city,
+        state=payload.state,
+        latitude=payload.latitude,
+        longitude=payload.longitude,
         zone=payload.zone,
         notes=payload.notes,
         birth_date=parse_curp(payload.curp).birth_date,
@@ -269,6 +297,25 @@ async def update_client(
     for field, value in changes.items():
         setattr(client, field, value)
 
+    # Si se editaron componentes estructurados de domicilio sin enviar `address`,
+    # se recompone el texto completo para mantenerlo sincronizado en pagares y recibos.
+    if "address" not in changes and (_ADDRESS_PARTS & changes.keys()):
+        composed = compose_address(
+            street=client.street,
+            exterior_number=client.exterior_number,
+            neighborhood=client.neighborhood,
+            postal_code=client.postal_code,
+            city=client.city,
+            state=client.state,
+        )
+        if composed:
+            before["address"] = client.address
+            client.address = composed
+            changes["address"] = composed
+
+    def _audit_val(val: object) -> object:
+        return str(val) if val is not None and not isinstance(val, (str, int, float, bool)) else val
+
     await audit_service.record(
         session,
         tenant_id=tenant_id,
@@ -276,8 +323,8 @@ async def update_client(
         action="client.update",
         entity="client",
         entity_id=client.id,
-        before=before,
-        after=changes,
+        before={k: _audit_val(v) for k, v in before.items()},
+        after={k: _audit_val(v) for k, v in changes.items()},
         ip_address=ip_address,
         user_agent=user_agent,
     )
@@ -473,6 +520,14 @@ async def anonymize_client(
     client.curp = pseudonym_curp
     client.phone = "0000000000"
     client.address = "DATOS ANONIMIZADOS"
+    client.street = None
+    client.exterior_number = None
+    client.neighborhood = None
+    client.postal_code = None
+    client.city = None
+    client.state = None
+    client.latitude = None
+    client.longitude = None
     client.zone = None
     client.birth_date = None
     client.notes = None

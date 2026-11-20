@@ -28,7 +28,7 @@ def _entities() -> tuple[Tenant, Client, Loan, Payment, User]:
     client = Client(
         id=uuid4(),
         full_name="María López Pérez",
-        curp="LOPJ850312MDFZRN07",
+        curp="LOPJ850312MDFZRN00",
         phone="8711234567",
         address="Av. Juárez 123",
     )

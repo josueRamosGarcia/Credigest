@@ -5,6 +5,7 @@
  * hay token, se consulta `/auth/me` para restaurar la sesión.
  */
 
+import { useQueryClient } from "@tanstack/react-query";
 import {
   useCallback,
   useEffect,
@@ -18,6 +19,7 @@ import { tokens } from "@/api/client";
 import { AuthContext, type AuthState } from "./context";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<authApi.CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,18 +65,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handler = () => {
       tokens.clear();
+      queryClient.clear();
       setUser(null);
     };
 
     window.addEventListener("credigest:session-expired", handler);
     return () => window.removeEventListener("credigest:session-expired", handler);
-  }, []);
+  }, [queryClient]);
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null);
     try {
       const pair = await authApi.login(email, password);
       tokens.save(pair.access_token, pair.refresh_token);
+      queryClient.clear();
 
       const profile = await authApi.me();
       setUser(profile);
@@ -84,7 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError(message);
       throw exc;
     }
-  }, []);
+  }, [queryClient]);
 
   const logout = useCallback(async () => {
     const refresh = tokens.refresh;
@@ -95,9 +99,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Si el servidor no responde, igual se limpia la sesión local.
     } finally {
       tokens.clear();
+      queryClient.clear();
       setUser(null);
     }
-  }, []);
+  }, [queryClient]);
 
   const value = useMemo<AuthState>(
     () => ({ user, loading, error, login, logout, refreshUser }),

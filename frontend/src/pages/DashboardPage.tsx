@@ -10,7 +10,15 @@ import {
   getCollections,
   getSummary,
 } from "@/api/dashboard";
-import { Card, EmptyState, ErrorState, PageHeader, Spinner, StatCard } from "@/components/ui";
+import {
+  Alert,
+  Card,
+  EmptyState,
+  ErrorState,
+  PageHeader,
+  Spinner,
+  StatCard,
+} from "@/components/ui";
 import { formatCurrency, formatDate, todayIso } from "@/lib/format";
 
 /** Barra horizontal simple para el aging. */
@@ -50,6 +58,7 @@ export function DashboardPage() {
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   const summary = useQuery({
     queryKey: ["dashboard", "summary", { fromDate, toDate }],
@@ -76,6 +85,7 @@ export function DashboardPage() {
 
   const handleExportCsv = async () => {
     setExporting(true);
+    setExportError(null);
     try {
       const query = new URLSearchParams();
       if (fromDate) query.set("from_date", fromDate);
@@ -84,6 +94,10 @@ export function DashboardPage() {
       await downloadFile(
         `/dashboard/export.csv${suffix}`,
         `dashboard-${todayIso()}.csv`,
+      );
+    } catch (exc) {
+      setExportError(
+        exc instanceof Error ? exc.message : "No se pudo exportar el CSV.",
       );
     } finally {
       setExporting(false);
@@ -129,6 +143,12 @@ export function DashboardPage() {
           </button>
         }
       />
+
+      {exportError && (
+        <div className="mb-4">
+          <Alert tone="error">{exportError}</Alert>
+        </div>
+      )}
 
       <div className="mb-5 flex flex-wrap items-end gap-3">
         <div>

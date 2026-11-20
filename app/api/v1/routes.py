@@ -8,16 +8,19 @@ from datetime import date
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import CurrentUserDep
+from app.core.deps import AuthContext, CurrentUserDep, require_role
+from app.core.request_meta import request_meta
 from app.db.session import get_session
 from app.models.client import Client
 from app.models.collection_route import CollectionRoute
 from app.models.loan import Installment, Loan
+from app.models.user import User
 from app.schemas.collection_route import (
+    CollectorOption,
     RouteCreate,
     RouteDetail,
     RouteItemRead,
@@ -25,12 +28,15 @@ from app.schemas.collection_route import (
     RouteListResponse,
     RouteRead,
     RouteReorder,
+    ZoneOption,
 )
 from app.services import audit_service, route_service
+from app.services.payment_service import business_today
 
 router = APIRouter(prefix="/routes", tags=["rutas de cobro"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+LenderDep = Annotated[AuthContext, Depends(require_role("prestamista"))]
 
 
 def _not_found(message: str) -> HTTPException:
@@ -43,6 +49,16 @@ def _conflict(message: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
 
 
+async def _collector_names(session: AsyncSession, collector_ids: set[UUID]) -> dict[UUID, str]:
+    """Resuelve los nombres de los cobradores en una sola consulta."""
+    if not collector_ids:
+        return {}
+    rows = await session.execute(
+        select(User.id, User.full_name).where(User.id.in_(collector_ids))
+    )
+    return {user_id: full_name for user_id, full_name in rows.all()}
+
+
 async def _build_detail(
     session: AsyncSession, route: CollectionRoute, *, include_items: bool = True
 ) -> RouteDetail:
@@ -51,17 +67,22 @@ async def _build_detail(
     Se resuelven en una sola consulta para evitar el problema N+1.
     """
     pending_items = sum(1 for item in route.items if item.visit_status == "pendiente")
+    paid_items = sum(1 for item in route.items if item.visit_status == "pagado")
+    names = await _collector_names(session, {route.cobrador_id})
+    cobrador_name = names.get(route.cobrador_id)
 
     if not include_items or not route.items:
         return RouteDetail(
             id=route.id,
             cobrador_id=route.cobrador_id,
+            cobrador_name=cobrador_name,
             zone=route.zone,
             route_date=route.route_date,
             status=route.status,
             notes=route.notes,
             total_items=len(route.items),
             pending_items=pending_items,
+            paid_items=paid_items,
             items=[],
         )
 
@@ -97,6 +118,9 @@ async def _build_detail(
                 notes=item.notes,
                 client_name=client.full_name,
                 client_address=client.address,
+                client_neighborhood=client.neighborhood,
+                client_latitude=client.latitude,
+                client_longitude=client.longitude,
                 client_phone=client.phone,
                 installment_number=installment.number,
                 due_date=installment.due_date,
@@ -109,14 +133,73 @@ async def _build_detail(
     return RouteDetail(
         id=route.id,
         cobrador_id=route.cobrador_id,
+        cobrador_name=cobrador_name,
         zone=route.zone,
         route_date=route.route_date,
         status=route.status,
         notes=route.notes,
         total_items=len(items),
         pending_items=pending_items,
+        paid_items=paid_items,
         items=items,
     )
+
+
+@router.get(
+    "/zones",
+    response_model=list[ZoneOption],
+    summary="Listar zonas disponibles para rutas",
+    description=(
+        "Devuelve las zonas de clientes activos de la financiera junto con el "
+        "numero de cuotas pendientes hasta la fecha indicada."
+    ),
+)
+async def list_route_zones(
+    context: LenderDep,
+    session: SessionDep,
+    route_date: Annotated[date | None, Query()] = None,
+) -> list[ZoneOption]:
+    """Lista zonas seleccionables para generar una ruta sin escribirla a mano."""
+    effective_date = route_date or business_today()
+    rows = await route_service.list_zones(session, context.tenant_id, effective_date)
+    return [
+        ZoneOption(
+            zone=zone,
+            active_clients=active_clients,
+            pending_installments=pending_installments,
+        )
+        for zone, active_clients, pending_installments in rows
+    ]
+
+
+@router.get(
+    "/collectors",
+    response_model=list[CollectorOption],
+    summary="Listar cobradores disponibles",
+    description=(
+        "Devuelve los usuarios activos de la financiera a los que se les puede "
+        "asignar una ruta de cobro."
+    ),
+)
+async def list_collectors(
+    context: LenderDep,
+    session: SessionDep,
+) -> list[CollectorOption]:
+    """Lista los usuarios activos asignables a una ruta, priorizando cobradores."""
+    users = (
+        await session.scalars(
+            select(User)
+            .where(
+                User.tenant_id == context.tenant_id,
+                User.is_active.is_(True),
+                User.role.in_(["cobrador", "prestamista", "admin"]),
+            )
+            .order_by(User.full_name)
+        )
+    ).all()
+    role_priority = {"cobrador": 0, "prestamista": 1, "admin": 2}
+    ordered = sorted(users, key=lambda u: (role_priority.get(u.role, 9), u.full_name.lower()))
+    return [CollectorOption.model_validate(user) for user in ordered]
 
 
 @router.get(
@@ -124,7 +207,7 @@ async def _build_detail(
     response_model=RouteListResponse,
     summary="Listar rutas",
     description=(
-        "El Administrador ve todas las rutas; el cobrador solo las suyas (RN-45)."
+        "El Administrador y Prestamista ven todas las rutas; el cobrador solo las suyas (RN-45)."
     ),
 )
 async def list_routes(
@@ -140,8 +223,9 @@ async def list_routes(
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
 ) -> RouteListResponse:
     """Lista las rutas visibles para el usuario."""
+    is_manager = context.role in {"admin", "prestamista"}
     effective_collector = None
-    if context.role != "admin":
+    if not is_manager:
         effective_collector = context.user.id
     elif cobrador_id is not None:
         effective_collector = cobrador_id
@@ -156,12 +240,14 @@ async def list_routes(
         page=page,
         page_size=page_size,
     )
+    names = await _collector_names(session, {route.cobrador_id for route in items})
 
     return RouteListResponse(
         items=[
             RouteRead(
                 id=route.id,
                 cobrador_id=route.cobrador_id,
+                cobrador_name=names.get(route.cobrador_id),
                 zone=route.zone,
                 route_date=route.route_date,
                 status=route.status,
@@ -169,6 +255,9 @@ async def list_routes(
                 total_items=len(route.items),
                 pending_items=sum(
                     1 for item in route.items if item.visit_status == "pendiente"
+                ),
+                paid_items=sum(
+                    1 for item in route.items if item.visit_status == "pagado"
                 ),
             )
             for route in items
@@ -186,18 +275,20 @@ async def list_routes(
     summary="Generar una ruta",
     description=(
         "Arma la lista de cuotas pendientes de una zona con vencimiento hasta la "
-        "fecha indicada. Si la ruta ya existe, devuelve la existente."
+        "fecha indicada. Si la ruta ya existe, devuelve la existente. "
+        "Solo el Administrador o Prestamista pueden crear y asignar rutas."
     ),
 )
 async def create_route(
     payload: RouteCreate,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
+    request: Request,
 ) -> RouteDetail:
     """Genera una ruta de cobro.
 
     Raises:
-        HTTPException: 400 si el cobrador no es valido.
+        HTTPException: 400 si el cobrador no es valido; 403 si es cobrador.
     """
     target = payload.cobrador_id or context.user.id
 
@@ -215,6 +306,7 @@ async def create_route(
             status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
         ) from exc
 
+    meta = request_meta(request)
     await audit_service.record(
         session,
         tenant_id=context.tenant_id,
@@ -228,6 +320,8 @@ async def create_route(
             "cobrador_id": str(route.cobrador_id),
             "items": len(route.items),
         },
+        ip_address=meta.ip_address,
+        user_agent=meta.user_agent,
         commit=True,
     )
 
@@ -255,7 +349,7 @@ async def get_route(
             context.tenant_id,
             route_id,
             cobrador_id=context.user.id,
-            is_admin=context.role == "admin",
+            is_admin=context.role in {"admin", "prestamista"},
         )
     except route_service.RouteNotFoundError as exc:
         raise _not_found(str(exc)) from exc
@@ -290,7 +384,7 @@ async def update_item(
             visit_status=payload.visit_status,
             notes=payload.notes,
             cobrador_id=context.user.id,
-            is_admin=context.role == "admin",
+            is_admin=context.role in {"admin", "prestamista"},
         )
     except route_service.RouteNotFoundError as exc:
         raise _not_found(str(exc)) from exc
@@ -315,6 +409,9 @@ async def update_item(
         notes=item.notes,
         client_name=client.full_name,
         client_address=client.address,
+        client_neighborhood=client.neighborhood,
+        client_latitude=client.latitude,
+        client_longitude=client.longitude,
         client_phone=client.phone,
         installment_number=installment.number,
         due_date=installment.due_date,
@@ -344,7 +441,7 @@ async def reorder_route(
             route_id,
             payload.item_ids,
             cobrador_id=context.user.id,
-            is_admin=context.role == "admin",
+            is_admin=context.role in {"admin", "prestamista"},
         )
     except route_service.RouteNotFoundError as exc:
         raise _not_found(str(exc)) from exc
@@ -372,16 +469,21 @@ async def close_route(
             context.tenant_id,
             route_id,
             cobrador_id=context.user.id,
-            is_admin=context.role == "admin",
+            is_admin=context.role in {"admin", "prestamista"},
         )
     except route_service.RouteNotFoundError as exc:
         raise _not_found(str(exc)) from exc
 
+    names = await _collector_names(session, {route.cobrador_id})
     return RouteRead(
         id=route.id,
         cobrador_id=route.cobrador_id,
+        cobrador_name=names.get(route.cobrador_id),
         zone=route.zone,
         route_date=route.route_date,
         status=route.status,
         notes=route.notes,
+        total_items=len(route.items),
+        pending_items=sum(1 for item in route.items if item.visit_status == "pendiente"),
+        paid_items=sum(1 for item in route.items if item.visit_status == "pagado"),
     )

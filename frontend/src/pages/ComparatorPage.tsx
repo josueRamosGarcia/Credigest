@@ -115,14 +115,33 @@ export function ComparatorPage() {
 
   const handleCompare = (event: FormEvent) => {
     event.preventDefault();
-    if (Number(principal) <= 0) {
+    const principalNum = Number(principal);
+    const rateNum = Number(ratePercent);
+    const termNum = Number(termPeriods);
+    const feeNum = Number(openingFee || "0");
+
+    if (Number.isNaN(principalNum) || principalNum <= 0) {
       setFormError("El monto debe ser mayor que cero.");
       return;
     }
-    if (Number(termPeriods) < 1) {
-      setFormError("El plazo debe ser de al menos 1 periodo.");
+    if (Number.isNaN(rateNum) || rateNum < 0 || rateNum > 500) {
+      setFormError("La tasa por periodo debe estar entre 0 % y 500 %.");
       return;
     }
+    if (
+      Number.isNaN(termNum) ||
+      !Number.isInteger(termNum) ||
+      termNum < 1 ||
+      termNum > 520
+    ) {
+      setFormError("El plazo debe ser un entero entre 1 y 520 periodos.");
+      return;
+    }
+    if (Number.isNaN(feeNum) || feeNum < 0) {
+      setFormError("La comisión de apertura no puede ser negativa.");
+      return;
+    }
+    setFormError(null);
     compareMutation.mutate();
   };
 
@@ -453,9 +472,9 @@ export function ComparatorPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {[result.own_offer, ...result.bank_offers].map((row) => (
+                {[result.own_offer, ...result.bank_offers].map((row, index) => (
                   <tr
-                    key={row.institution}
+                    key={`${row.is_own_offer ? "own" : "bank"}-${index}-${row.institution}`}
                     className={
                       row.is_own_offer
                         ? "bg-brand-50/70 font-medium"

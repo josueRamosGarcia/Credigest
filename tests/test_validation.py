@@ -13,9 +13,11 @@ from app.domain.validation import (
     parse_curp,
 )
 
-#: CURP validas generadas con el algoritmo oficial del RENAPO.
-VALID_1985 = "LOPJ850312MDFZRN07"
-VALID_1990 = "GALJ900715HJCMPR06"
+#: CURP validas generadas con el algoritmo oficial del RENAPO (pesos 18..2).
+VALID_1985 = "LOPJ850312MDFZRN00"
+VALID_1990 = "GALJ900715HJCMPR04"
+#: Vector oficial de referencia (python-stdnum / RENAPO).
+VALID_RENAPO_REF = "BOXW310820HNERXN09"
 
 
 class TestNormalize:
@@ -25,10 +27,10 @@ class TestNormalize:
         assert normalize_curp(VALID_1985.lower()) == VALID_1985
 
     def test_removes_spaces(self) -> None:
-        assert normalize_curp(" LOPJ850312MDFZRN07 ") == VALID_1985
+        assert normalize_curp(f" {VALID_1985} ") == VALID_1985
 
     def test_removes_hyphens(self) -> None:
-        assert normalize_curp("LOPJ-850312-MDFZRN-07") == VALID_1985
+        assert normalize_curp("LOPJ-850312-MDFZRN-00") == VALID_1985
 
     def test_rejects_empty(self) -> None:
         with pytest.raises(CurpError, match="vacia"):
@@ -43,10 +45,17 @@ class TestCheckDigit:
     """Algoritmo del digito verificador."""
 
     def test_known_curp_1985(self) -> None:
-        assert curp_check_digit(VALID_1985[:17]) == "7"
+        assert curp_check_digit(VALID_1985[:17]) == "0"
 
     def test_known_curp_1990(self) -> None:
-        assert curp_check_digit(VALID_1990[:17]) == "6"
+        assert curp_check_digit(VALID_1990[:17]) == "4"
+
+    def test_official_renapo_reference_vector(self) -> None:
+        assert curp_check_digit(VALID_RENAPO_REF[:17]) == "9"
+        data = parse_curp(VALID_RENAPO_REF)
+        assert data.birth_date == date(1931, 8, 20)
+        assert data.sex is Sex.HOMBRE
+        assert data.state == "NE"
 
     def test_requires_seventeen_chars(self) -> None:
         with pytest.raises(CurpError, match="17 caracteres"):

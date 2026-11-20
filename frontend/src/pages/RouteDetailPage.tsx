@@ -15,9 +15,11 @@ import {
   VISIT_STATUS_STYLES,
   closeRoute,
   getRoute,
+  reorderRoute,
   updateRouteItem,
 } from "@/api/routes";
 import type { VisitStatus } from "@/api/types";
+import { RouteMap } from "@/components/RouteMap";
 import {
   Alert,
   Badge,
@@ -28,12 +30,16 @@ import {
   Spinner,
 } from "@/components/ui";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { buildGoogleMapsStopUrl, parseCoordinate } from "@/lib/geo";
 
 export function RouteDetailPage() {
   const { id = "" } = useParams();
   const queryClient = useQueryClient();
   const [payingItem, setPayingItem] = useState<string | null>(null);
   const [amount, setAmount] = useState("");
+  const [method, setMethod] = useState<"efectivo" | "spei">("efectivo");
+  const [speiReference, setSpeiReference] = useState("");
+  const [showMap, setShowMap] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const route = useQuery({
@@ -50,7 +56,17 @@ export function RouteDetailPage() {
       itemId: string;
       status: VisitStatus;
     }) => updateRouteItem(id, itemId, { visit_status: status }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["routes"] }),
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["routes"] });
+    },
+    onError: (exc: unknown) => {
+      setError(
+        exc instanceof Error
+          ? exc.message
+          : "No se pudo actualizar la visita.",
+      );
+    },
   });
 
   const pay = useMutation({
@@ -58,8 +74,13 @@ export function RouteDetailPage() {
     onSuccess: () => {
       setPayingItem(null);
       setAmount("");
-      queryClient.invalidateQueries({ queryKey: ["routes"] });
-      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      setMethod("efectivo");
+      setSpeiReference("");
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["routes"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      void queryClient.invalidateQueries({ queryKey: ["loans"] });
+      void queryClient.invalidateQueries({ queryKey: ["payments"] });
     },
     onError: (exc: unknown) => {
       setError(exc instanceof Error ? exc.message : "No se pudo registrar.");
@@ -68,21 +89,51 @@ export function RouteDetailPage() {
 
   const close = useMutation({
     mutationFn: () => closeRoute(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["routes"] }),
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["routes"] });
+    },
+    onError: (exc: unknown) => {
+      setError(
+        exc instanceof Error ? exc.message : "No se pudo cerrar la ruta.",
+      );
+    },
+  });
+
+  const reorder = useMutation({
+    mutationFn: (itemIds: string[]) => reorderRoute(id, itemIds),
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["routes"] });
+    },
+    onError: (exc: unknown) => {
+      setError(
+        exc instanceof Error
+          ? exc.message
+          : "No se pudo reordenar la ruta.",
+      );
+    },
   });
 
   if (route.isLoading) return <Spinner />;
 
   if (route.isError || !route.data) {
     return (
-      <ErrorState
-        message={
-          route.error instanceof Error
-            ? route.error.message
-            : "No se pudo cargar la ruta."
-        }
-        onRetry={() => route.refetch()}
-      />
+      <div className="space-y-4">
+        <ErrorState
+          message={
+            route.error instanceof Error
+              ? route.error.message
+              : "No se pudo cargar la ruta."
+          }
+          onRetry={() => route.refetch()}
+        />
+        <div className="text-center">
+          <Link to="/rutas" className="btn-secondary">
+            Volver a rutas
+          </Link>
+        </div>
+      </div>
     );
   }
 
@@ -94,7 +145,7 @@ export function RouteDetailPage() {
     <div>
       <PageHeader
         title={`Ruta ${data.zone}`}
-        description={`${formatDate(data.route_date)} · ${ROUTE_STATUS_LABELS[data.status]}`}
+        description={`${formatDate(data.route_date)} · ${ROUTE_STATUS_LABELS[data.status]}${data.cobrador_name ? ` · ${data.cobrador_name}` : ""}`}
         actions={
           <>
             <Link to="/rutas" className="btn-secondary">
@@ -143,6 +194,31 @@ export function RouteDetailPage() {
         </Card>
       </div>
 
+      {data.items.length > 0 && (
+        <Card className="mb-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold tracking-wide text-slate-700 uppercase">
+              Mapa de la ruta (Torreón)
+            </h2>
+            <button
+              type="button"
+              className="btn-secondary px-2.5 py-1 text-xs"
+              onClick={() => setShowMap((prev) => !prev)}
+            >
+              {showMap ? "Ocultar mapa" : "Mostrar mapa"}
+            </button>
+          </div>
+          {showMap && (
+            <RouteMap
+              items={data.items}
+              isClosed={isClosed}
+              isReordering={reorder.isPending}
+              onOptimizeOrder={(orderedIds) => reorder.mutate(orderedIds)}
+            />
+          )}
+        </Card>
+      )}
+
       {data.items.length === 0 && (
         <EmptyState
           title="Ruta sin visitas"
@@ -187,16 +263,30 @@ export function RouteDetailPage() {
                     incluye mora {formatCurrency(item.late_fee)}
                   </p>
                 )}
-                <a
-                  href={`tel:${item.client_phone}`}
-                  className="mt-1 inline-block text-xs text-brand-700 hover:underline"
-                >
-                  Llamar {item.client_phone}
-                </a>
+                <div className="mt-1 flex flex-wrap justify-end gap-3">
+                  <a
+                    href={`tel:${item.client_phone}`}
+                    className="text-xs text-brand-700 hover:underline"
+                  >
+                    Llamar {item.client_phone}
+                  </a>
+                  <a
+                    href={buildGoogleMapsStopUrl({
+                      lat: parseCoordinate(item.client_latitude),
+                      lng: parseCoordinate(item.client_longitude),
+                      address: item.client_address,
+                    })}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-brand-700 hover:underline"
+                  >
+                    Cómo llegar
+                  </a>
+                </div>
               </div>
             </div>
 
-            {!isClosed && (
+            {!isClosed && item.visit_status !== "pagado" && (
               <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
                 <button
                   type="button"
@@ -204,6 +294,8 @@ export function RouteDetailPage() {
                   onClick={() => {
                     setPayingItem(item.id);
                     setAmount(item.total_due);
+                    setMethod("efectivo");
+                    setSpeiReference("");
                     setError(null);
                   }}
                 >
@@ -224,18 +316,50 @@ export function RouteDetailPage() {
 
             {payingItem === item.id && (
               <div className="mt-3 rounded-lg border border-brand-200 bg-brand-50 p-3">
-                <label className="label" htmlFor={`amount-${item.id}`}>
-                  Monto recibido
-                </label>
                 <div className="flex flex-wrap items-end gap-2">
-                  <input
-                    id={`amount-${item.id}`}
-                    type="number"
-                    step="0.01"
-                    className="input tabular max-w-[160px]"
-                    value={amount}
-                    onChange={(event) => setAmount(event.target.value)}
-                  />
+                  <div>
+                    <label className="label" htmlFor={`amount-${item.id}`}>
+                      Monto recibido
+                    </label>
+                    <input
+                      id={`amount-${item.id}`}
+                      type="number"
+                      step="0.01"
+                      className="input tabular max-w-[160px]"
+                      value={amount}
+                      onChange={(event) => setAmount(event.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor={`method-${item.id}`}>
+                      Forma de pago
+                    </label>
+                    <select
+                      id={`method-${item.id}`}
+                      className="input max-w-[160px]"
+                      value={method}
+                      onChange={(event) =>
+                        setMethod(event.target.value as "efectivo" | "spei")
+                      }
+                    >
+                      <option value="efectivo">Efectivo</option>
+                      <option value="spei">SPEI</option>
+                    </select>
+                  </div>
+                  {method === "spei" && (
+                    <div>
+                      <label className="label" htmlFor={`spei-${item.id}`}>
+                        Referencia SPEI
+                      </label>
+                      <input
+                        id={`spei-${item.id}`}
+                        className="input max-w-[200px]"
+                        placeholder="Mínimo 6 caracteres"
+                        value={speiReference}
+                        onChange={(event) => setSpeiReference(event.target.value)}
+                      />
+                    </div>
+                  )}
                   <button
                     type="button"
                     className="btn-primary px-3 py-2 text-xs"
@@ -246,10 +370,19 @@ export function RouteDetailPage() {
                         setError("El monto debe ser mayor que cero.");
                         return;
                       }
+                      if (method === "spei" && speiReference.trim().length < 6) {
+                        setError(
+                          "La referencia SPEI debe tener al menos 6 caracteres.",
+                        );
+                        return;
+                      }
+                      setError(null);
                       pay.mutate({
                         loan_id: item.loan_id,
-                        amount: numeric,
-                        method: "efectivo",
+                        amount: numeric.toFixed(2),
+                        method,
+                        spei_reference:
+                          method === "spei" ? speiReference.trim() : undefined,
                       });
                     }}
                   >
@@ -261,6 +394,8 @@ export function RouteDetailPage() {
                     onClick={() => {
                       setPayingItem(null);
                       setAmount("");
+                      setMethod("efectivo");
+                      setSpeiReference("");
                     }}
                   >
                     Cancelar

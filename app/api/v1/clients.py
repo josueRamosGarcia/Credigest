@@ -10,7 +10,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import CurrentUserDep
+from app.core.deps import AuthContext, CurrentUserDep, require_role
 from app.core.request_meta import request_meta
 from app.core.storage import get_storage
 from app.db.session import get_session
@@ -32,6 +32,7 @@ from app.services import client_service
 router = APIRouter(prefix="/clients", tags=["clientes"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+LenderDep = Annotated[AuthContext, Depends(require_role("prestamista"))]
 
 
 def _not_found() -> HTTPException:
@@ -52,7 +53,7 @@ def _not_found() -> HTTPException:
     ),
 )
 async def list_clients(
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
     search: Annotated[str | None, Query(max_length=100)] = None,
     zone: Annotated[str | None, Query(max_length=80)] = None,
@@ -93,7 +94,7 @@ async def list_clients(
 )
 async def create_client(
     payload: ClientCreate,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
     request: Request,
 ) -> ClientDetail:
@@ -127,13 +128,27 @@ async def create_client(
 
 
 @router.get(
+    "/zones",
+    response_model=list[str],
+    summary="Listar zonas registradas",
+    description="Devuelve las zonas de cobro existentes en los clientes de la financiera.",
+)
+async def list_client_zones(
+    context: LenderDep,
+    session: SessionDep,
+) -> list[str]:
+    """Lista las zonas distintas en uso dentro del tenant."""
+    return await client_service.list_zones(session, context.tenant_id)
+
+
+@router.get(
     "/{client_id}",
     response_model=ClientDetail,
     summary="Consultar un cliente",
 )
 async def get_client(
     client_id: UUID,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
 ) -> ClientDetail:
     """Devuelve un cliente con sus referencias.
@@ -158,7 +173,7 @@ async def get_client(
 async def update_client(
     client_id: UUID,
     payload: ClientUpdate,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
     request: Request,
 ) -> ClientDetail:
@@ -196,7 +211,7 @@ async def update_client(
 async def change_status(
     client_id: UUID,
     payload: ClientStatusChange,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
     request: Request,
 ) -> ClientRead:
@@ -275,7 +290,7 @@ async def anonymize_client(
 async def add_reference(
     client_id: UUID,
     payload: ClientReferenceCreate,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
 ) -> ClientReferenceRead:
     """Agrega una referencia a un cliente existente."""
@@ -303,7 +318,7 @@ async def add_reference(
 )
 async def list_documents(
     client_id: UUID,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
 ) -> list[DocumentRead]:
     """Lista los documentos del cliente."""
@@ -327,18 +342,12 @@ async def list_documents(
 )
 async def set_client_portal_pin(
     client_id: UUID,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
     request: Request,
     payload: PortalPinSetRequest | None = None,
 ) -> PortalPinResponse:
     """Genera o asigna el PIN de 6 digitos del portal del cliente."""
-    if context.role == "cobrador":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Solo el Prestamista o el Administrador pueden gestionar el PIN del cliente.",
-        )
-
     desired_pin = payload.pin if payload is not None else None
     try:
         meta = request_meta(request)

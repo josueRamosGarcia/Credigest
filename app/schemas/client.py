@@ -1,12 +1,47 @@
 """Esquemas de clientes."""
 
 from datetime import date
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.domain.validation import CurpError, parse_curp
+
+Latitude = Annotated[
+    Decimal,
+    Field(ge=Decimal("-90"), le=Decimal("90"), max_digits=9, decimal_places=6),
+]
+Longitude = Annotated[
+    Decimal,
+    Field(ge=Decimal("-180"), le=Decimal("180"), max_digits=9, decimal_places=6),
+]
+
+
+def compose_address(
+    *,
+    street: str | None = None,
+    exterior_number: str | None = None,
+    neighborhood: str | None = None,
+    postal_code: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+) -> str:
+    """Arma una direccion legible a partir de sus componentes separados."""
+    parts: list[str] = []
+    street_line = " ".join(p for p in [street, exterior_number] if p)
+    if street_line:
+        parts.append(street_line)
+    if neighborhood:
+        parts.append(f"Col. {neighborhood}")
+    if postal_code:
+        parts.append(f"C.P. {postal_code}")
+    if city:
+        parts.append(city)
+    if state:
+        parts.append(state)
+    return ", ".join(parts)
 
 
 class ClientReferenceCreate(BaseModel):
@@ -43,7 +78,7 @@ class ClientCreate(BaseModel):
         json_schema_extra={
             "example": {
                 "full_name": "Maria Lopez Perez",
-                "curp": "LOPJ850312MDFZRN07",
+                "curp": "LOPJ850312MDFZRN00",
                 "phone": "8711234567",
                 "address": "Av. Juarez 123, Col. Centro, Torreon, Coahuila",
                 "zone": "Centro",
@@ -65,7 +100,15 @@ class ClientCreate(BaseModel):
     #: mensaje de error sea el mismo en todos los casos y en espanol.
     curp: Annotated[str, Field(max_length=30)]
     phone: Annotated[str, Field(min_length=7, max_length=20)]
-    address: Annotated[str, Field(min_length=5, max_length=500)]
+    address: Annotated[str | None, Field(max_length=500)] = None
+    street: Annotated[str | None, Field(max_length=200)] = None
+    exterior_number: Annotated[str | None, Field(max_length=30)] = None
+    neighborhood: Annotated[str | None, Field(max_length=150)] = None
+    postal_code: Annotated[str | None, Field(max_length=10)] = None
+    city: Annotated[str | None, Field(max_length=100)] = None
+    state: Annotated[str | None, Field(max_length=100)] = None
+    latitude: Latitude | None = None
+    longitude: Longitude | None = None
     zone: Annotated[str | None, Field(max_length=80)] = None
     notes: Annotated[str | None, Field(max_length=1000)] = None
     references: Annotated[list[ClientReferenceCreate], Field(max_length=10)] = Field(
@@ -81,11 +124,52 @@ class ClientCreate(BaseModel):
         except CurpError as exc:
             raise ValueError(str(exc)) from exc
 
-    @field_validator("full_name", "phone", "address")
+    @field_validator("full_name", "phone")
     @classmethod
     def _strip(cls, value: str) -> str:
         """Quita espacios sobrantes."""
         return value.strip()
+
+    @field_validator(
+        "address",
+        "street",
+        "exterior_number",
+        "neighborhood",
+        "postal_code",
+        "city",
+        "state",
+        "zone",
+        "notes",
+    )
+    @classmethod
+    def _strip_optional(cls, value: str | None) -> str | None:
+        """Normaliza textos opcionales convirtiendo vacios en None."""
+        if value is None:
+            return None
+        cleaned = value.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def _ensure_address_and_coords(self) -> "ClientCreate":
+        """Arma `address` desde los campos separados si no se envio directamente."""
+        if not self.address:
+            composed = compose_address(
+                street=self.street,
+                exterior_number=self.exterior_number,
+                neighborhood=self.neighborhood,
+                postal_code=self.postal_code,
+                city=self.city,
+                state=self.state,
+            )
+            self.address = composed or None
+
+        if not self.address or len(self.address) < 5:
+            raise ValueError("La direccion debe tener al menos 5 caracteres.")
+
+        if (self.latitude is None) != (self.longitude is None):
+            raise ValueError("Debes indicar tanto la latitud como la longitud.")
+
+        return self
 
 
 class ClientUpdate(BaseModel):
@@ -95,11 +179,39 @@ class ClientUpdate(BaseModel):
     documentos. Si se capturo mal, se corrige con un proceso administrativo.
     """
 
+    model_config = ConfigDict(str_strip_whitespace=True)
+
     full_name: Annotated[str | None, Field(min_length=3, max_length=200)] = None
     phone: Annotated[str | None, Field(min_length=7, max_length=20)] = None
     address: Annotated[str | None, Field(min_length=5, max_length=500)] = None
+    street: Annotated[str | None, Field(max_length=200)] = None
+    exterior_number: Annotated[str | None, Field(max_length=30)] = None
+    neighborhood: Annotated[str | None, Field(max_length=150)] = None
+    postal_code: Annotated[str | None, Field(max_length=10)] = None
+    city: Annotated[str | None, Field(max_length=100)] = None
+    state: Annotated[str | None, Field(max_length=100)] = None
+    latitude: Latitude | None = None
+    longitude: Longitude | None = None
     zone: Annotated[str | None, Field(max_length=80)] = None
     notes: Annotated[str | None, Field(max_length=1000)] = None
+
+    @field_validator("full_name", "phone", "address")
+    @classmethod
+    def _reject_explicit_null(cls, value: str | None) -> str:
+        """Impide enviar `null` explicito en columnas NOT NULL."""
+        if value is None:
+            raise ValueError("Este campo no puede ser nulo.")
+        return value
+
+    @model_validator(mode="after")
+    def _validate_coords_pair(self) -> "ClientUpdate":
+        """Si se envia latitud o longitud, ambas deben venir juntas (o ambas nulas)."""
+        sent = self.model_fields_set
+        if ("latitude" in sent or "longitude" in sent) and (
+            (self.latitude is None) != (self.longitude is None)
+        ):
+            raise ValueError("Debes indicar tanto la latitud como la longitud.")
+        return self
 
 
 class ClientRead(BaseModel):
@@ -112,6 +224,14 @@ class ClientRead(BaseModel):
     curp: str
     phone: str
     address: str
+    street: str | None = None
+    exterior_number: str | None = None
+    neighborhood: str | None = None
+    postal_code: str | None = None
+    city: str | None = None
+    state: str | None = None
+    latitude: Decimal | None = None
+    longitude: Decimal | None = None
     zone: str | None
     birth_date: date | None
     status: str

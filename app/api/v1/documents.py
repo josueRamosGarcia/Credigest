@@ -11,12 +11,15 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import CurrentUserDep
+from app.core.deps import AuthContext, require_role
 from app.core.request_meta import request_meta
 from app.core.storage import (
+    MAX_FILE_BYTES,
     InvalidFileError,
     StorageError,
     get_storage,
+    validate_file_signature,
+    validate_upload,
 )
 from app.db.session import get_session
 from app.schemas.client import DocumentRead
@@ -25,6 +28,24 @@ from app.services import audit_service, client_service
 router = APIRouter(prefix="/clients", tags=["documentos"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+LenderDep = Annotated[AuthContext, Depends(require_role("prestamista"))]
+
+
+async def _read_limited(file: UploadFile, max_bytes: int) -> bytes:
+    """Lee el archivo por bloques cortando al superar `max_bytes` para evitar OOM."""
+    chunks: list[bytes] = []
+    total = 0
+    chunk_size = 64 * 1024
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            limit_mb = max_bytes // (1024 * 1024)
+            raise InvalidFileError(f"El archivo supera el limite de {limit_mb} MB.")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _not_found(message: str) -> HTTPException:
@@ -44,7 +65,7 @@ def _not_found(message: str) -> HTTPException:
 )
 async def upload_document(
     client_id: UUID,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
     request: Request,
     file: Annotated[UploadFile, File(description="Archivo del documento")],
@@ -72,11 +93,19 @@ async def upload_document(
     except client_service.ClientNotFoundError as exc:
         raise _not_found(str(exc)) from exc
 
-    content = await file.read()
+    try:
+        content = await _read_limited(file, MAX_FILE_BYTES)
+    except InvalidFileError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     mime_type = file.content_type or "application/octet-stream"
 
     storage = get_storage()
     try:
+        validate_upload(content, mime_type)
+        validate_file_signature(content, mime_type)
         file_key = storage.save(
             context.tenant_id,
             client_id,
@@ -142,7 +171,7 @@ async def upload_document(
 async def download_document(
     client_id: UUID,
     document_id: UUID,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
 ) -> Response:
     """Descarga el contenido de un documento.
@@ -176,6 +205,7 @@ async def download_document(
         headers={
             "Content-Disposition": f'inline; filename="{filename}"',
             "Content-Length": str(len(content)),
+            "X-Content-Type-Options": "nosniff",
             # Los documentos son datos personales: no se cachean.
             "Cache-Control": "private, no-store",
         },
@@ -190,19 +220,15 @@ async def download_document(
 async def delete_document(
     client_id: UUID,
     document_id: UUID,
-    context: CurrentUserDep,
+    context: LenderDep,
     session: SessionDep,
+    request: Request,
 ) -> None:
     """Borra el documento del almacenamiento y de la base.
 
     Raises:
         HTTPException: 404 si no existe.
     """
-    try:
-        await client_service.get_client(session, context.tenant_id, client_id)
-    except client_service.ClientNotFoundError as exc:
-        raise _not_found(str(exc)) from exc
-
     try:
         file_key = await client_service.remove_document(
             session, context.tenant_id, client_id, document_id
@@ -212,6 +238,7 @@ async def delete_document(
 
     get_storage().delete(file_key)
 
+    meta = request_meta(request)
     await audit_service.record(
         session,
         tenant_id=context.tenant_id,
@@ -220,5 +247,7 @@ async def delete_document(
         entity="client_document",
         entity_id=document_id,
         before={"client_id": str(client_id)},
+        ip_address=meta.ip_address,
+        user_agent=meta.user_agent,
         commit=True,
     )

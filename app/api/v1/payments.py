@@ -88,12 +88,14 @@ async def register_payment(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
         ) from exc
+    except payment_service.LoanNotFoundForPaymentError as exc:
+        raise _not_found(str(exc)) from exc
     except payment_service.LoanNotPayableError as exc:
         raise _conflict(str(exc)) from exc
     except payment_service.PaymentExceedsBalanceError as exc:
         raise _conflict(str(exc)) from exc
     except payment_service.PaymentError as exc:
-        raise _not_found(str(exc)) from exc
+        raise _conflict(str(exc)) from exc
 
     return PaymentResult(
         payment=PaymentDetail.model_validate(outcome.payment),
@@ -104,6 +106,24 @@ async def register_payment(
         covered_principal=outcome.covered_principal,
         duplicate_warning=outcome.duplicate_warning,
     )
+
+
+async def _require_collector_loan_access(
+    session: AsyncSession,
+    context: AuthContext,
+    loan: Loan,
+) -> None:
+    """Si el usuario es cobrador, verifica que el prestamo pertenezca a sus rutas."""
+    if context.role != "cobrador":
+        return
+    assigned = await payment_service.is_collector_assigned(
+        session, context.tenant_id, context.user.id, loan.id, loan.client_id
+    )
+    if not assigned:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No tienes acceso a pagos fuera de tus rutas asignadas.",
+        )
 
 
 @router.get(
@@ -126,6 +146,7 @@ async def list_payments(
         session,
         context.tenant_id,
         loan_id=loan_id,
+        cobrador_id=context.user.id if context.role == "cobrador" else None,
         from_date=from_date,
         to_date=to_date,
         page=page,
@@ -160,6 +181,11 @@ async def get_payment(
     except payment_service.PaymentNotFoundError as exc:
         raise _not_found(str(exc)) from exc
 
+    if context.role == "cobrador":
+        loan = await session.scalar(select(Loan).where(Loan.id == payment.loan_id))
+        if loan is not None:
+            await _require_collector_loan_access(session, context, loan)
+
     return PaymentDetail.model_validate(payment)
 
 
@@ -185,7 +211,7 @@ async def cancel_payment(
         HTTPException: 403 sin permiso; 404 si no existe; 409 si ya esta
             anulado o hay pagos posteriores.
     """
-    if not context.has_permission("cancel_payment"):
+    if context.role == "cobrador" or not context.has_permission("cancel_payment"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tu usuario no tiene permiso para anular pagos.",
@@ -199,6 +225,7 @@ async def cancel_payment(
             payment_id,
             context.user.id,
             payload.reason,
+            actor_role=context.role,
             ip_address=meta.ip_address,
             user_agent=meta.user_agent,
         )
@@ -244,6 +271,7 @@ async def download_receipt(
     loan = await session.scalar(select(Loan).where(Loan.id == payment.loan_id))
     if loan is None:
         raise _not_found("El préstamo del pago ya no existe.")
+    await _require_collector_loan_access(session, context, loan)
 
     client = await session.scalar(select(Client).where(Client.id == loan.client_id))
     if client is None:
@@ -310,6 +338,7 @@ async def whatsapp_summary(
     loan = await session.scalar(select(Loan).where(Loan.id == payment.loan_id))
     if loan is None:
         raise _not_found("El préstamo del pago ya no existe.")
+    await _require_collector_loan_access(session, context, loan)
 
     client = await session.scalar(select(Client).where(Client.id == loan.client_id))
     if client is None:

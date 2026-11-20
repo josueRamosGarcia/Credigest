@@ -18,6 +18,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_meta import parse_ip
 from app.models.audit_log import AuditLog
 from app.services.dashboard_service import local_date
 
@@ -152,21 +153,67 @@ async def record(
         entity_id=entity_id,
         before=sanitize(changed_before) or None,
         after=sanitize(changed_after) or None,
-        ip_address=ip_address,
+        ip_address=parse_ip(ip_address),
         user_agent=user_agent,
     )
 
     try:
-        session.add(entry)
         if commit:
+            session.add(entry)
             await session.commit()
             await session.refresh(entry)
+        else:
+            # Savepoint: si falla la insercion en auditoria, solo se revierte
+            # esta entrada sin abortar la transaccion principal de negocio.
+            async with session.begin_nested():
+                session.add(entry)
+                await session.flush()
     except Exception:  # pragma: no cover - depende de la base
+        if commit:
+            await session.rollback()
         # Nunca se interrumpe la operacion de negocio por un fallo de auditoria.
         logger.exception("No se pudo registrar la auditoria: %s", action)
         return None
 
     return entry
+
+
+async def list_entries_after_cursor(
+    session: AsyncSession,
+    tenant_id: UUID,
+    *,
+    from_date: Any = None,
+    to_date: Any = None,
+    user_id: UUID | None = None,
+    action: str | None = None,
+    entity: str | None = None,
+    before_id: int | None = None,
+    limit: int = MAX_PAGE_SIZE,
+) -> list[AuditLog]:
+    """Lee un lote de bitacora paginado por cursor (`id < before_id`).
+
+    Evita consultas `COUNT(*)` redundantes y saltos/duplicados cuando entran
+    registros nuevos durante una exportacion.
+    """
+    limit = min(max(1, limit), MAX_PAGE_SIZE)
+    conditions = [AuditLog.tenant_id == tenant_id]
+    if from_date is not None:
+        conditions.append(local_date(AuditLog.created_at) >= from_date)
+    if to_date is not None:
+        conditions.append(local_date(AuditLog.created_at) <= to_date)
+    if user_id is not None:
+        conditions.append(AuditLog.user_id == user_id)
+    if action:
+        conditions.append(AuditLog.action == action)
+    if entity:
+        conditions.append(AuditLog.entity == entity)
+    if before_id is not None:
+        conditions.append(AuditLog.id < before_id)
+
+    result = await session.scalars(
+        select(AuditLog).where(*conditions).order_by(AuditLog.id.desc()).limit(limit)
+    )
+    return list(result.all())
 
 
 async def list_entries(

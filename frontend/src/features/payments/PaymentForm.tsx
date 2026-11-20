@@ -9,7 +9,7 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
 import {
@@ -54,8 +54,8 @@ export function PaymentForm({ loanId, pendingTotal, onDone, onCancel }: Props) {
 
   const {
     register,
+    control,
     handleSubmit,
-    watch,
     formState: { errors },
   } = useForm<FormInput, unknown, FormOutput>({
     resolver: zodResolver(schema),
@@ -67,12 +67,13 @@ export function PaymentForm({ loanId, pendingTotal, onDone, onCancel }: Props) {
     },
   });
 
-  const method = watch("method");
+  const method = useWatch({ control, name: "method" });
 
   const mutation = useMutation({
     mutationFn: (values: FormOutput) =>
       registerPayment({
         ...values,
+        amount: values.amount.toFixed(2),
         loan_id: loanId,
         spei_reference:
           values.method === "spei" ? values.spei_reference : undefined,
@@ -90,6 +91,15 @@ export function PaymentForm({ loanId, pendingTotal, onDone, onCancel }: Props) {
         <h2 className="mb-3 text-sm font-semibold text-green-900">
           Pago registrado · {result.payment.folio}
         </h2>
+
+        {result.duplicate_warning && (
+          <div className="mb-3">
+            <Alert tone="warning">
+              Se detectó otro pago reciente por el mismo monto en este préstamo.
+              Verifica que no se haya duplicado.
+            </Alert>
+          </div>
+        )}
 
         <dl className="grid gap-3 text-sm sm:grid-cols-3">
           <div>

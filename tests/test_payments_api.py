@@ -25,7 +25,7 @@ from app.models.user import User
 pytestmark = pytest.mark.db
 
 PASSWORD = "clave-segura-123"
-CURP = "LOPJ850312MDFZRN07"
+CURP = "LOPJ850312MDFZRN00"
 START = "2026-11-02"
 
 LOAN = {

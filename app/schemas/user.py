@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -195,4 +196,13 @@ class SystemSettingUpdate(BaseModel):
     timezone: Annotated[str, Field(min_length=3, max_length=50)] = (
         "America/Mexico_City"
     )
+
+    @field_validator("timezone")
+    @classmethod
+    def _check_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError(f"Zona horaria no valida: {value!r}.") from exc
+        return value
 

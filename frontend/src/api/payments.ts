@@ -35,11 +35,12 @@ export interface PaymentResult {
   covered_late_fee: Money;
   covered_interest: Money;
   covered_principal: Money;
+  duplicate_warning?: boolean;
 }
 
 export interface PaymentInput {
   loan_id: string;
-  amount: number;
+  amount: number | string;
   method: PaymentMethod;
   spei_reference?: string | null;
   payment_type?: PaymentType;

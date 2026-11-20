@@ -7,7 +7,7 @@
  */
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
@@ -24,7 +24,13 @@ import {
   type Simulation,
 } from "@/api/loans";
 import { Alert, Badge, Card, PageHeader, Spinner } from "@/components/ui";
-import { formatCurrency, formatDate, formatRate, todayIso } from "@/lib/format";
+import {
+  formatCurrency,
+  formatDate,
+  formatRate,
+  percentToRate,
+  todayIso,
+} from "@/lib/format";
 
 const schema = z.object({
   client_id: z.string().min(1, "Selecciona un cliente"),
@@ -49,6 +55,7 @@ type FormOutput = z.output<typeof schema>;
 
 export function LoanNewPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [params] = useSearchParams();
   const preselectedClient = params.get("cliente") ?? "";
 
@@ -80,13 +87,11 @@ export function LoanNewPage() {
 
   const values = useWatch({ control });
 
-  const simulationMutation = useMutation({
-    mutationFn: simulate,
-  });
-
   // Simula automáticamente cuando cambian las condiciones, con una pequeña
-  // espera para no disparar una petición por cada tecla.
+  // espera para no disparar una petición por cada tecla y cancelando
+  // solicitudes previas para evitar respuestas desordenadas.
   useEffect(() => {
+    const controller = new AbortController();
     const timer = setTimeout(() => {
       const principal = Number(values.principal);
       const rate = Number(values.interest_percent);
@@ -97,18 +102,29 @@ export function LoanNewPage() {
       if (!periods || periods < 1 || periods > 520) return;
       if (!values.start_date) return;
 
-      setSimulationError(null);
-      simulationMutation
-        .mutateAsync({
-          principal,
-          interest_rate: rate / 100,
+      simulate(
+        {
+          principal: principal.toFixed(2),
+          interest_rate: percentToRate(rate),
           rate_period: values.rate_period as RatePeriod,
           scheme: values.scheme as LoanScheme,
           term_periods: periods,
           start_date: values.start_date,
+        },
+        controller.signal,
+      )
+        .then((data) => {
+          if (controller.signal.aborted) return;
+          setSimulationError(null);
+          setSimulation(data);
         })
-        .then(setSimulation)
         .catch((exc: unknown) => {
+          if (
+            controller.signal.aborted ||
+            (exc instanceof DOMException && exc.name === "AbortError")
+          ) {
+            return;
+          }
           setSimulation(null);
           setSimulationError(
             exc instanceof Error ? exc.message : "No se pudo simular.",
@@ -116,8 +132,10 @@ export function LoanNewPage() {
         });
     }, 400);
 
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [
     values.principal,
     values.interest_percent,
@@ -129,14 +147,18 @@ export function LoanNewPage() {
 
   const approval = useMutation({
     mutationFn: createLoan,
-    onSuccess: (loan) => navigate(`/prestamos/${loan.id}`),
+    onSuccess: (loan) => {
+      void queryClient.invalidateQueries({ queryKey: ["loans"] });
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      navigate(`/prestamos/${loan.id}`);
+    },
   });
 
   const onSubmit = (form: FormOutput) => {
     approval.mutate({
       client_id: form.client_id,
-      principal: form.principal,
-      interest_rate: form.interest_percent / 100,
+      principal: form.principal.toFixed(2),
+      interest_rate: percentToRate(form.interest_percent),
       rate_period: form.rate_period,
       scheme: form.scheme,
       term_periods: form.term_periods,

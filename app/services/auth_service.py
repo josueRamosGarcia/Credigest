@@ -14,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.jwt import TokenError, create_access_token, create_refresh_token, decode_token
-from app.core.security import verify_password
+from app.core.security import DUMMY_PASSWORD_HASH, verify_password
 from app.models.refresh_token import RefreshToken
+from app.models.tenant import Tenant
 from app.models.user import User
 
 
@@ -63,10 +64,10 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
     """
     user = await session.scalar(select(User).where(User.email == email.lower().strip()))
 
-    # Se verifica siempre el hash, incluso si el usuario no existe, para que el
-    # tiempo de respuesta no delate correos validos.
+    # Se verifica siempre un hash bcrypt valido, incluso si el usuario no existe,
+    # para que el tiempo de respuesta no delate correos validos.
     if user is None:
-        verify_password(password, "$2b$12$" + "x" * 53)
+        verify_password(password, DUMMY_PASSWORD_HASH)
         raise AuthenticationError("Correo o contrasena incorrectos.")
 
     if not verify_password(password, user.password_hash):
@@ -75,19 +76,17 @@ async def authenticate(session: AsyncSession, email: str, password: str) -> User
     if not user.is_active:
         raise AuthenticationError("La cuenta esta desactivada.")
 
+    tenant = await session.scalar(select(Tenant).where(Tenant.id == user.tenant_id))
+    if tenant is None or not tenant.is_active:
+        raise AuthenticationError("La financiera esta desactivada.")
+
     return user
 
 
-async def issue_tokens(session: AsyncSession, user: User) -> IssuedTokens:
-    """Emite un par nuevo de tokens y guarda el refresh hasheado.
-
-    Args:
-        session: Sesion de base de datos.
-        user: Usuario que inicia sesion.
-
-    Returns:
-        Los tokens emitidos.
-    """
+def _build_issued_tokens(
+    session: AsyncSession, user: User
+) -> IssuedTokens:
+    """Agrega un nuevo RefreshToken y actualiza last_login_at sin hacer commit."""
     settings = get_settings()
 
     access_token, _, _ = create_access_token(user.id, user.tenant_id, user.role)
@@ -101,7 +100,6 @@ async def issue_tokens(session: AsyncSession, user: User) -> IssuedTokens:
         )
     )
     user.last_login_at = _now()
-    await session.commit()
 
     return IssuedTokens(
         access_token=access_token,
@@ -110,11 +108,26 @@ async def issue_tokens(session: AsyncSession, user: User) -> IssuedTokens:
     )
 
 
+async def issue_tokens(session: AsyncSession, user: User) -> IssuedTokens:
+    """Emite un par nuevo de tokens y guarda el refresh hasheado.
+
+    Args:
+        session: Sesion de base de datos.
+        user: Usuario que inicia sesion.
+
+    Returns:
+        Los tokens emitidos.
+    """
+    issued = _build_issued_tokens(session, user)
+    await session.commit()
+    return issued
+
+
 async def rotate_tokens(session: AsyncSession, raw_refresh_token: str) -> IssuedTokens:
     """Canjea un refresh token por un par nuevo y revoca el anterior.
 
-    La rotacion limita el dano de un token robado: al usarlo, el original deja
-    de servir y quien lo robo se queda con un token ya revocado.
+    La rotacion bloquea la fila con FOR UPDATE y confirma la revocacion junto
+    con la emision del nuevo par en una sola transaccion atomica.
 
     Args:
         session: Sesion de base de datos.
@@ -132,7 +145,9 @@ async def rotate_tokens(session: AsyncSession, raw_refresh_token: str) -> Issued
         raise SessionExpiredError(str(exc)) from exc
 
     stored = await session.scalar(
-        select(RefreshToken).where(RefreshToken.token_hash == _hash_token(raw_refresh_token))
+        select(RefreshToken)
+        .where(RefreshToken.token_hash == _hash_token(raw_refresh_token))
+        .with_for_update()
     )
 
     if stored is None:
@@ -147,17 +162,19 @@ async def rotate_tokens(session: AsyncSession, raw_refresh_token: str) -> Issued
     if stored.expires_at <= _now():
         raise SessionExpiredError("La sesion expiro. Inicia sesion de nuevo.")
 
-    # El registro esta ligado al usuario por llave foranea, asi que no hace
-    # falta comparar `stored.user_id` con el `sub` del token: la base lo impide.
     user = await session.scalar(select(User).where(User.id == payload.subject))
     if user is None or not user.is_active:
         raise SessionExpiredError("La cuenta ya no esta disponible.")
 
-    # Rotacion: el token usado se marca como revocado antes de emitir otro.
-    stored.revoked_at = _now()
-    await session.commit()
+    tenant = await session.scalar(select(Tenant).where(Tenant.id == user.tenant_id))
+    if tenant is None or not tenant.is_active:
+        raise SessionExpiredError("La financiera esta desactivada.")
 
-    return await issue_tokens(session, user)
+    # Rotacion atomica: se revoca el anterior y se guarda el nuevo en un commit.
+    stored.revoked_at = _now()
+    issued = _build_issued_tokens(session, user)
+    await session.commit()
+    return issued
 
 
 async def logout(session: AsyncSession, raw_refresh_token: str) -> None:

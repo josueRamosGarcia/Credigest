@@ -80,8 +80,11 @@ function extractMessage(body: ErrorBody, status: number): string {
   return "No se pudo completar la operación.";
 }
 
+/** Promesa compartida para deduplicar renovaciones concurrentes de token. */
+let refreshInFlight: Promise<boolean> | null = null;
+
 /** Intenta renovar el par de tokens. Devuelve `false` si no fue posible. */
-async function refreshTokens(): Promise<boolean> {
+async function performRefresh(): Promise<boolean> {
   const refresh = tokens.refresh;
   if (!refresh) return false;
 
@@ -103,6 +106,61 @@ async function refreshTokens(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/** Renueva tokens reutilizando la peticion en vuelo si ya hay una activa. */
+async function refreshTokens(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = performRefresh().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+/**
+ * Ejecuta `fetch` contra la API adjuntando el token y renovando una vez ante 401.
+ * Sirve tanto para JSON como para descargas binarias y subidas `FormData`.
+ */
+export async function authorizedFetch(
+  path: string,
+  init: RequestInit & { skipAuth?: boolean } = {},
+): Promise<Response> {
+  const { skipAuth = false, headers: rawHeaders, ...rest } = init;
+  const headers: Record<string, string> = {};
+
+  if (rawHeaders instanceof Headers) {
+    rawHeaders.forEach((value, key) => {
+      headers[key] = value;
+    });
+  } else if (Array.isArray(rawHeaders)) {
+    for (const [key, value] of rawHeaders) {
+      headers[key] = value;
+    }
+  } else if (rawHeaders) {
+    Object.assign(headers, rawHeaders);
+  }
+
+  const access = tokens.access;
+  if (access && !skipAuth) headers.Authorization = `Bearer ${access}`;
+
+  const send = () => fetch(`${BASE_URL}${path}`, { ...rest, headers });
+
+  let response = await send();
+
+  // 401 con token: puede ser expiracion. Se renueva una sola vez (deduplicado).
+  if (response.status === 401 && access && !skipAuth) {
+    const renewed = await refreshTokens();
+    if (renewed && tokens.access) {
+      headers.Authorization = `Bearer ${tokens.access}`;
+      response = await send();
+    } else {
+      tokens.clear();
+      window.dispatchEvent(new Event("credigest:session-expired"));
+    }
+  }
+
+  return response;
 }
 
 interface RequestOptions {
@@ -127,30 +185,13 @@ export async function request<T>(
   const headers: Record<string, string> = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
-  const access = tokens.access;
-  if (access && !skipAuth) headers.Authorization = `Bearer ${access}`;
-
-  const send = () =>
-    fetch(`${BASE_URL}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
-    });
-
-  let response = await send();
-
-  // 401 con token: puede ser expiración. Se renueva una sola vez.
-  if (response.status === 401 && access && !skipAuth) {
-    const renewed = await refreshTokens();
-    if (renewed) {
-      headers.Authorization = `Bearer ${tokens.access}`;
-      response = await send();
-    } else {
-      tokens.clear();
-      window.dispatchEvent(new Event("credigest:session-expired"));
-    }
-  }
+  const response = await authorizedFetch(path, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+    skipAuth,
+    signal,
+  });
 
   if (response.status === 204) {
     return undefined as T;
@@ -169,15 +210,24 @@ export async function request<T>(
   return (await response.json()) as T;
 }
 
-/** Descarga un archivo binario (el pagaré) respetando el refresh de token. */
+/** Descarga un archivo binario (pagaré, recibo, CSV) respetando el refresh de token. */
 export async function downloadFile(path: string, filename: string): Promise<void> {
-  const access = tokens.access;
-  const response = await fetch(`${BASE_URL}${path}`, {
-    headers: access ? { Authorization: `Bearer ${access}` } : {},
-  });
+  const response = await authorizedFetch(path);
 
   if (!response.ok) {
-    throw new ApiError(response.status, "No se pudo descargar el documento.");
+    let payload: ErrorBody = {};
+    try {
+      payload = (await response.json()) as ErrorBody;
+    } catch {
+      // Sin cuerpo JSON: se usa el mensaje generico.
+    }
+    throw new ApiError(
+      response.status,
+      typeof payload.detail === "string"
+        ? payload.detail
+        : "No se pudo descargar el documento.",
+      payload.detail,
+    );
   }
 
   const blob = await response.blob();

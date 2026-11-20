@@ -42,7 +42,8 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
 
-  // Nunca se cachea la API: los datos financieros deben venir del servidor.
+  // Nunca interceptar recursos de otros origenes ni la API financiera.
+  if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith("/api/")) return;
 
   // Navegacion: se intenta la red y, si falla, se sirve el index cacheado.

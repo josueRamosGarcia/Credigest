@@ -1,15 +1,14 @@
 /** Acciones sobre documentos que no son componentes. */
 
-import { tokens, ApiError } from "@/api/client";
+import { ApiError, authorizedFetch } from "@/api/client";
 
-/** Abre un documento en una pestaña nueva. */
+/** Abre un documento en una pestaña nueva respetando el refresh de token. */
 export async function openDocument(
   clientId: string,
   documentId: string,
 ): Promise<void> {
-  const response = await fetch(
-    `/api/v1/clients/${clientId}/documents/${documentId}`,
-    { headers: tokens.access ? { Authorization: `Bearer ${tokens.access}` } : {} },
+  const response = await authorizedFetch(
+    `/clients/${clientId}/documents/${documentId}`,
   );
 
   if (!response.ok) {

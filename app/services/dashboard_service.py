@@ -17,10 +17,11 @@ comparaciones convierten primero a la zona del negocio.
 """
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +92,11 @@ def local_date(column: Any) -> Any:
     """
     timezone = get_settings().timezone
     return func.date(func.timezone(timezone, column))
+
+
+def _today_in_tz() -> date:
+    """Fecha actual en la zona horaria configurada del negocio (RN-05)."""
+    return datetime.now(ZoneInfo(get_settings().timezone)).date()
 
 
 def _to_decimal(value: Decimal | int | float | None) -> Decimal:
@@ -269,6 +275,41 @@ async def _loan_counts(
     )
 
 
+async def _pending_principal(
+    session: AsyncSession,
+    tenant_id: UUID,
+    prestamista_id: UUID | None = None,
+    route_id: UUID | None = None,
+) -> Decimal:
+    """Saldo de capital pendiente de prestamos activos/vencidos (RN-47)."""
+    scope = _loan_scope_conditions(tenant_id, prestamista_id, route_id)
+    active_loan_ids = (
+        select(Loan.id)
+        .where(*scope, Loan.status.in_(ACTIVE_LOAN_STATUSES))
+        .subquery()
+    )
+
+    total_principal = await session.scalar(
+        select(func.coalesce(func.sum(Installment.principal_part), 0)).where(
+            Installment.loan_id.in_(select(active_loan_ids.c.id))
+        )
+    )
+    paid_principal = await session.scalar(
+        select(func.coalesce(func.sum(PaymentApplication.amount), 0))
+        .select_from(PaymentApplication)
+        .join(Payment, Payment.id == PaymentApplication.payment_id)
+        .where(
+            Payment.tenant_id == tenant_id,
+            Payment.status == "aplicado",
+            Payment.loan_id.in_(select(active_loan_ids.c.id)),
+            PaymentApplication.concept == "capital",
+        )
+    )
+    return round_money(
+        max(Decimal("0.00"), _to_decimal(total_principal) - _to_decimal(paid_principal))
+    )
+
+
 async def summary(
     session: AsyncSession,
     tenant_id: UUID,
@@ -293,7 +334,7 @@ async def summary(
     Returns:
         Los indicadores del dashboard.
     """
-    reference = today or date.today()
+    reference = today or _today_in_tz()
 
     capital_prestado = await _sum_principal_placed(
         session, tenant_id, from_date, to_date, prestamista_id, route_id
@@ -311,7 +352,9 @@ async def summary(
     cartera_total, cartera_vencida = await _portfolio(
         session, tenant_id, reference, prestamista_id, route_id
     )
-    capital_proyectado = round_money(max(Decimal("0.00"), cartera_total))
+    capital_proyectado = await _pending_principal(
+        session, tenant_id, prestamista_id, route_id
+    )
 
     activos, pagados, vencidos = await _loan_counts(
         session, tenant_id, prestamista_id, route_id
@@ -354,7 +397,7 @@ async def aging(
     Returns:
         Las franjas con monto e cantidad de cuotas.
     """
-    reference = today or date.today()
+    reference = today or _today_in_tz()
 
     rows = await session.execute(
         select(

@@ -100,6 +100,59 @@ async def _pending_installments(
     return result.all()
 
 
+async def list_zones(
+    session: AsyncSession,
+    tenant_id: UUID,
+    route_date: date,
+) -> list[tuple[str, int, int]]:
+    """Devuelve las zonas de clientes activos con su conteo de cuotas pendientes.
+
+    Returns:
+        Lista de tuplas `(zona, clientes_activos, cuotas_pendientes)` ordenada
+        primero por zonas con mas cuotas por cobrar y luego alfabeticamente.
+    """
+    client_rows = await session.execute(
+        select(Client.zone, func.count(Client.id))
+        .where(
+            Client.tenant_id == tenant_id,
+            Client.status == "activo",
+            Client.zone.is_not(None),
+            Client.zone != "",
+        )
+        .group_by(Client.zone)
+    )
+    by_zone: dict[str, list[int]] = {
+        zone: [int(count or 0), 0]
+        for zone, count in client_rows.all()
+        if zone
+    }
+
+    pending_rows = await session.execute(
+        select(Client.zone, func.count(Installment.id))
+        .join(Loan, Loan.client_id == Client.id)
+        .join(Installment, Installment.loan_id == Loan.id)
+        .where(
+            Loan.tenant_id == tenant_id,
+            Loan.status.in_(["activo", "vencido"]),
+            Client.status == "activo",
+            Client.zone.is_not(None),
+            Client.zone != "",
+            Installment.due_date <= route_date,
+            Installment.status.in_(["pendiente", "parcial", "vencida"]),
+        )
+        .group_by(Client.zone)
+    )
+    for zone, pending_count in pending_rows.all():
+        if not zone:
+            continue
+        entry = by_zone.setdefault(zone, [0, 0])
+        entry[1] = int(pending_count or 0)
+
+    result = [(zone, counts[0], counts[1]) for zone, counts in by_zone.items()]
+    result.sort(key=lambda row: (-row[2], row[0].lower()))
+    return result
+
+
 async def create_route(
     session: AsyncSession,
     tenant_id: UUID,
@@ -369,8 +422,9 @@ async def close_route(
         route.notes = notes
 
     await session.commit()
-    await session.refresh(route)
-    return route
+    return await get_route(
+        session, tenant_id, route.id, cobrador_id=None, is_admin=True, refresh=True
+    )
 
 
 def item_totals(installment: Installment) -> tuple[Decimal, Decimal, Decimal]:

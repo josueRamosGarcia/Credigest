@@ -90,6 +90,9 @@ class RateLimiter:
                 return (True, 0)
 
             self._prune(bucket, current)
+            if not bucket.timestamps:
+                self._buckets.pop(key, None)
+                return (True, 0)
             if len(bucket.timestamps) < self._limit:
                 return (True, 0)
 

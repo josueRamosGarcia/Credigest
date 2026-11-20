@@ -23,8 +23,8 @@ export interface ScheduleRow {
 }
 
 export interface SimulationInput {
-  principal: number;
-  interest_rate: number;
+  principal: number | string;
+  interest_rate: number | string;
   rate_period: RatePeriod;
   scheme: LoanScheme;
   term_periods: number;
@@ -90,8 +90,11 @@ export interface LoanListParams {
   page_size?: number;
 }
 
-export async function simulate(input: SimulationInput): Promise<Simulation> {
-  return request<Simulation>("/loans/simulate", { method: "POST", body: input });
+export async function simulate(
+  input: SimulationInput,
+  signal?: AbortSignal,
+): Promise<Simulation> {
+  return request<Simulation>("/loans/simulate", { method: "POST", body: input, signal });
 }
 
 export async function createLoan(input: LoanInput): Promise<LoanDetail> {

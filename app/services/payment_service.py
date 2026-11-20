@@ -19,11 +19,13 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.config import get_settings
 from app.domain.money import MoneyError, round_money
 from app.domain.payment_application import (
     Concept,
@@ -44,8 +46,17 @@ from app.services.dashboard_service import local_date
 MAX_PAGE_SIZE = 100
 
 
+def business_today(tz_name: str | None = None) -> date:
+    """Fecha actual en la zona horaria del negocio (RN-05)."""
+    return datetime.now(ZoneInfo(tz_name or get_settings().timezone)).date()
+
+
 class PaymentError(Exception):
     """Error de negocio relacionado con pagos."""
+
+
+class LoanNotFoundForPaymentError(PaymentError):
+    """El prestamo indicado no existe en esta financiera."""
 
 
 class LoanNotPayableError(PaymentError):
@@ -99,14 +110,20 @@ def _to_state(installment: Installment) -> InstallmentState:
     )
 
 
+def _is_applied(application: PaymentApplication) -> bool:
+    """Indica si la aplicacion pertenece a un pago vigente (no anulado)."""
+    payment = getattr(application, "payment", None)
+    return payment is None or payment.status == "aplicado"
+
+
 def _paid_for(installment: Installment, concept: Concept) -> Decimal:
-    """Total ya aplicado a un concepto de una cuota."""
+    """Total ya aplicado a un concepto de una cuota (solo pagos vigentes)."""
     return round_money(
         sum(
             (
                 application.amount
                 for application in installment.applications
-                if application.concept == concept.value
+                if application.concept == concept.value and _is_applied(application)
             ),
             Decimal("0.00"),
         )
@@ -123,8 +140,14 @@ def _status_for(installment: Installment, today: date, is_paid: bool, has_paymen
 
 
 async def _next_folio(session: AsyncSession, tenant_id: UUID, today: date) -> str:
-    """Genera el siguiente folio del tenant para el anio actual (RN-39)."""
-    tenant = await session.scalar(select(Tenant).where(Tenant.id == tenant_id))
+    """Genera el siguiente folio del tenant para el anio actual (RN-39).
+
+    Bloquea la fila del tenant con FOR UPDATE para evitar colisiones de folio
+    cuando llegan pagos concurrentes en la misma financiera.
+    """
+    tenant = await session.scalar(
+        select(Tenant).where(Tenant.id == tenant_id).with_for_update()
+    )
     label = (tenant.slug if tenant and tenant.slug else "CRD").upper()
 
     count = await session.scalar(
@@ -132,7 +155,7 @@ async def _next_folio(session: AsyncSession, tenant_id: UUID, today: date) -> st
         .select_from(Payment)
         .where(
             Payment.tenant_id == tenant_id,
-            func.extract("year", Payment.created_at) == today.year,
+            func.extract("year", local_date(Payment.created_at)) == today.year,
         )
     )
     consecutive = int(count or 0) + 1
@@ -216,17 +239,20 @@ async def register_payment(
             excede el saldo.
         NotAuthorizedToCollectError: Si es cobrador y el cliente no esta en su ruta.
     """
-    business_date = today or date.today()
+    business_date = today or business_today()
 
     loan = await session.scalar(
         select(Loan)
         .options(
-            selectinload(Loan.installments).selectinload(Installment.applications)
+            selectinload(Loan.installments)
+            .selectinload(Installment.applications)
+            .selectinload(PaymentApplication.payment)
         )
         .where(Loan.id == payload.loan_id, Loan.tenant_id == tenant_id)
+        .with_for_update()
     )
     if loan is None:
-        raise PaymentError("El prestamo no existe.")
+        raise LoanNotFoundForPaymentError("El prestamo no existe.")
 
     if actor_role == "cobrador":
         assigned = await is_collector_assigned(
@@ -398,6 +424,7 @@ async def list_payments(
     tenant_id: UUID,
     *,
     loan_id: UUID | None = None,
+    cobrador_id: UUID | None = None,
     from_date: date | None = None,
     to_date: date | None = None,
     page: int = 1,
@@ -410,6 +437,16 @@ async def list_payments(
     conditions = [Payment.tenant_id == tenant_id]
     if loan_id:
         conditions.append(Payment.loan_id == loan_id)
+    if cobrador_id is not None:
+        assigned_loans = (
+            select(CollectionRouteItem.loan_id)
+            .join(CollectionRoute, CollectionRoute.id == CollectionRouteItem.route_id)
+            .where(
+                CollectionRoute.tenant_id == tenant_id,
+                CollectionRoute.cobrador_id == cobrador_id,
+            )
+        )
+        conditions.append(Payment.loan_id.in_(assigned_loans))
     if from_date:
         conditions.append(local_date(Payment.created_at) >= from_date)
     if to_date:
@@ -435,6 +472,8 @@ async def cancel_payment(
     cancelled_by: UUID,
     reason: str,
     *,
+    actor_role: str = "admin",
+    today: date | None = None,
     ip_address: str | None = None,
     user_agent: str | None = None,
 ) -> PaymentOutcome:
@@ -445,12 +484,33 @@ async def cancel_payment(
 
     Raises:
         PaymentNotFoundError: Si no existe en el tenant.
-        PaymentNotCancellableError: Si ya esta anulado o hay pagos posteriores.
+        PaymentNotCancellableError: Si ya esta anulado, hay pagos posteriores o
+            el prestamo ya estaba pagado y quien anula no es Administrador.
     """
+    business_date = today or business_today()
     payment = await get_payment(session, tenant_id, payment_id)
+
+    loan = await session.scalar(
+        select(Loan)
+        .options(
+            selectinload(Loan.installments)
+            .selectinload(Installment.applications)
+            .selectinload(PaymentApplication.payment)
+        )
+        .where(Loan.id == payment.loan_id, Loan.tenant_id == tenant_id)
+        .with_for_update()
+    )
+    if loan is None:
+        raise PaymentNotFoundError("El prestamo del pago ya no existe.")
 
     if payment.status == "anulado":
         raise PaymentNotCancellableError("El pago ya fue anulado.")
+
+    # RN-38: anular el pago que liquido el prestamo requiere Administrador.
+    if loan.status == "pagado" and actor_role != "admin":
+        raise PaymentNotCancellableError(
+            "Solo el Administrador puede anular un pago que liquido un prestamo."
+        )
 
     # Solo se puede anular el pago mas reciente del prestamo. El desempate por
     # folio es necesario porque dentro de una misma transaccion `now()` devuelve
@@ -466,17 +526,10 @@ async def cancel_payment(
             "Hay pagos posteriores. Anulalos primero, del mas reciente al mas antiguo."
         )
 
-    loan = await session.scalar(
-        select(Loan)
-        .options(selectinload(Loan.installments).selectinload(Installment.applications))
-        .where(Loan.id == payment.loan_id)
-    )
-    if loan is None:
-        raise PaymentNotFoundError("El prestamo del pago ya no existe.")
-
+    installments_by_id = {inst.id: inst for inst in loan.installments}
     affected: set[UUID] = set()
     for application in payment.applications:
-        installment = await session.get(Installment, application.installment_id)
+        installment = installments_by_id.get(application.installment_id)
         if installment is None:
             continue
         installment.paid_amount = round_money(installment.paid_amount - application.amount)
@@ -488,8 +541,11 @@ async def cancel_payment(
     for installment in loan.installments:
         if installment.id not in affected:
             continue
-        installment.status = (
-            "vencida" if installment.due_date < date.today() else "pendiente"
+        installment.status = _status_for(
+            installment,
+            business_date,
+            is_paid=False,
+            has_payment=installment.paid_amount > Decimal("0.00"),
         )
 
     payment.status = "anulado"
@@ -498,7 +554,10 @@ async def cancel_payment(
     payment.cancel_reason = reason
     amount = payment.amount
 
-    loan.status = _loan_status(loan, date.today())
+    loan.status = _loan_status(loan, business_date)
+
+    # Revertir paradas en rutas activas que quedaron ligadas a este pago.
+    await _revert_route_items_for_payment(session, tenant_id, payment.id)
 
     await audit_service.record(
         session,
@@ -528,18 +587,16 @@ async def cancel_payment(
     )
 
 
-
 async def _mark_route_items_paid(
     session: AsyncSession,
     loan: Loan,
     allocation: Any,
     payment_id: UUID,
 ) -> None:
-    """Marca como pagadas las paradas de ruta con cuotas liquidadas (RN-46).
+    """Marca como pagadas las paradas de rutas activas con cuotas liquidadas (RN-46).
 
-    Solo aplica a cuotas completamente pagadas: una parada con pago parcial
-    sigue pendiente en la ruta del cobrador. Se filtra por las cuotas de este
-    prestamo, nunca por numero de cuota, para no tocar otros prestamos.
+    Solo aplica a cuotas completamente pagadas y en rutas activas: nunca altera
+    rutas cerradas ni paradas ya resueltas.
     """
     paid_numbers = {
         number for number, state in allocation.new_states.items() if state.is_paid
@@ -556,11 +613,37 @@ async def _mark_route_items_paid(
         return
 
     route_items = await session.scalars(
-        select(CollectionRouteItem).where(
-            CollectionRouteItem.installment_id.in_(paid_installment_ids)
+        select(CollectionRouteItem)
+        .join(CollectionRoute, CollectionRoute.id == CollectionRouteItem.route_id)
+        .where(
+            CollectionRoute.tenant_id == loan.tenant_id,
+            CollectionRoute.status == "activa",
+            CollectionRouteItem.installment_id.in_(paid_installment_ids),
+            CollectionRouteItem.visit_status == "pendiente",
         )
     )
 
     for item in route_items:
         item.visit_status = "pagado"
         item.payment_id = payment_id
+
+
+async def _revert_route_items_for_payment(
+    session: AsyncSession,
+    tenant_id: UUID,
+    payment_id: UUID,
+) -> None:
+    """Revierte a pendiente las paradas de rutas activas ligadas a un pago anulado."""
+    route_items = await session.scalars(
+        select(CollectionRouteItem)
+        .join(CollectionRoute, CollectionRoute.id == CollectionRouteItem.route_id)
+        .where(
+            CollectionRoute.tenant_id == tenant_id,
+            CollectionRoute.status == "activa",
+            CollectionRouteItem.payment_id == payment_id,
+        )
+    )
+
+    for item in route_items:
+        item.visit_status = "pendiente"
+        item.payment_id = None

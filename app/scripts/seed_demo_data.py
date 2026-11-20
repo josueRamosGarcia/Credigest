@@ -29,10 +29,10 @@ from app.schemas.loan import LoanCreate
 from app.schemas.payment import PaymentCreate
 from app.services import client_service, loan_service, payment_service, route_service
 
-CURP_MARIA = "LOPJ850312MDFZRN07"
+CURP_MARIA = "LOPJ850312MDFZRN00"
 PIN_MARIA = "123456"
 
-CURP_JUAN = "GALJ900715HJCMPR06"
+CURP_JUAN = "GALJ900715HJCMPR04"
 PIN_JUAN = "654321"
 
 

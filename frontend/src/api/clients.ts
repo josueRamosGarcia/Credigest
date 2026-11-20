@@ -17,10 +17,19 @@ export interface Client {
   curp: string;
   phone: string;
   address: string;
+  street?: string | null;
+  exterior_number?: string | null;
+  neighborhood?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  state?: string | null;
+  latitude?: string | number | null;
+  longitude?: string | number | null;
   zone: string | null;
   birth_date: string | null;
   status: ClientStatus;
   notes: string | null;
+  has_portal_pin?: boolean;
 }
 
 export interface ClientDetail extends Client {
@@ -45,7 +54,15 @@ export interface ClientInput {
   full_name: string;
   curp: string;
   phone: string;
-  address: string;
+  address?: string;
+  street?: string | null;
+  exterior_number?: string | null;
+  neighborhood?: string | null;
+  postal_code?: string | null;
+  city?: string | null;
+  state?: string | null;
+  latitude?: string | number | null;
+  longitude?: string | number | null;
   zone?: string | null;
   notes?: string | null;
   references?: ReferenceInput[];
@@ -70,6 +87,10 @@ export async function listClients(
   query.set("page_size", String(params.page_size ?? 20));
 
   return request<Paginated<Client>>(`/clients?${query.toString()}`);
+}
+
+export async function listClientZones(): Promise<string[]> {
+  return request<string[]>("/clients/zones");
 }
 
 export async function getClient(id: string): Promise<ClientDetail> {

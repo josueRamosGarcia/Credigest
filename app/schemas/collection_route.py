@@ -1,6 +1,7 @@
 """Esquemas de rutas de cobro."""
 
 from datetime import date
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
@@ -29,12 +30,33 @@ class RouteItemRead(BaseModel):
     #: Datos del cliente y la cuota, resueltos por el servicio.
     client_name: str
     client_address: str
+    client_neighborhood: str | None = None
+    client_latitude: Decimal | None = None
+    client_longitude: Decimal | None = None
     client_phone: str
     installment_number: int
     due_date: date
     amount_due: Money
     late_fee: Money
     total_due: Money
+
+
+class ZoneOption(BaseModel):
+    """Zona de cobro disponible para generar una ruta."""
+
+    zone: str
+    active_clients: int = 0
+    pending_installments: int = 0
+
+
+class CollectorOption(BaseModel):
+    """Usuario activo al que se le puede asignar una ruta de cobro."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    full_name: str
+    role: str
 
 
 class RouteRead(BaseModel):
@@ -44,12 +66,14 @@ class RouteRead(BaseModel):
 
     id: UUID
     cobrador_id: UUID
+    cobrador_name: str | None = None
     zone: str
     route_date: date
     status: str
     notes: str | None
     total_items: int = 0
     pending_items: int = 0
+    paid_items: int = 0
 
 
 class RouteDetail(RouteRead):

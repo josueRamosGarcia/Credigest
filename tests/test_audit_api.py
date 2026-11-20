@@ -229,7 +229,7 @@ class TestAuditIntegration:
             "/api/v1/clients",
             json={
                 "full_name": "Juan Garcia Lopez",
-                "curp": "GALJ900715HJCMPR06",
+                "curp": "GALJ900715HJCMPR04",
                 "phone": "8711234567",
                 "address": "Av. Juarez 123, Centro",
                 "zone": "Centro",
@@ -254,7 +254,7 @@ class TestAuditIntegration:
             "/api/v1/clients",
             json={
                 "full_name": "Juan Garcia Lopez",
-                "curp": "GALJ900715HJCMPR06",
+                "curp": "GALJ900715HJCMPR04",
                 "phone": "8711234567",
                 "address": "Av. Juarez 123, Centro",
             },
@@ -275,7 +275,7 @@ class TestAuditIntegration:
             "/api/v1/clients",
             json={
                 "full_name": "Juan Garcia Lopez",
-                "curp": "GALJ900715HJCMPR06",
+                "curp": "GALJ900715HJCMPR04",
                 "phone": "8711234567",
                 "address": "Av. Juarez 123, Centro",
                 "zone": "Centro",
@@ -303,7 +303,7 @@ class TestAuditIntegration:
             "/api/v1/clients",
             json={
                 "full_name": "Juan Garcia Lopez",
-                "curp": "GALJ900715HJCMPR06",
+                "curp": "GALJ900715HJCMPR04",
                 "phone": "8711234567",
                 "address": "Av. Juarez 123, Centro",
             },
@@ -406,7 +406,7 @@ class TestAuditIntegration:
             "/api/v1/clients",
             json={
                 "full_name": "Juan Garcia Lopez",
-                "curp": "GALJ900715HJCMPR06",
+                "curp": "GALJ900715HJCMPR04",
                 "phone": "8711234567",
                 "address": "Av. Juarez 123, Centro",
             },

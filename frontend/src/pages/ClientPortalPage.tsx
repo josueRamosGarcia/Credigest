@@ -6,7 +6,7 @@
  * próximo pago, su calendario de cuotas y descargar sus comprobantes de abono.
  */
 
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import {
@@ -299,31 +299,35 @@ export function ClientPortalPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadOverview = useCallback(async () => {
-    if (!portalSession.token) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    try {
-      const data = await getPortalOverview();
-      setOverview(data);
-    } catch (err) {
-      setOverview(null);
-      setError(
-        err instanceof Error
-          ? err.message
-          : "No se pudo cargar tu estado de cuenta.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    void loadOverview();
-  }, [loadOverview]);
+    if (!portalSession.token) return;
+    let active = true;
+
+    (async () => {
+      try {
+        const data = await getPortalOverview();
+        if (active) {
+          setOverview(data);
+          setError(null);
+        }
+      } catch (err) {
+        if (active) {
+          setOverview(null);
+          setError(
+            err instanceof Error
+              ? err.message
+              : "No se pudo cargar tu estado de cuenta.",
+          );
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
@@ -346,7 +350,8 @@ export function ClientPortalPage() {
         tenantSlug.trim() || undefined,
       );
       portalSession.save(tokenRes.access_token);
-      await loadOverview();
+      const data = await getPortalOverview();
+      setOverview(data);
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "No se pudo iniciar sesión.";
@@ -463,7 +468,7 @@ export function ClientPortalPage() {
               required
               maxLength={18}
               className="input uppercase"
-              placeholder="LOPJ850312MDFZRN07"
+              placeholder="LOPJ850312MDFZRN00"
               value={curp}
               onChange={(e) => setCurp(e.target.value.toUpperCase())}
             />

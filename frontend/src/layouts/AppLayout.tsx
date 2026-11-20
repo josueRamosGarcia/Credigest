@@ -19,13 +19,17 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { to: "/", label: "Inicio", icon: "◧", roles: ["cobrador"] },
   { to: "/dashboard", label: "Dashboard", icon: "▦", roles: ["admin"] },
   { to: "/clientes", label: "Clientes", icon: "◍", roles: ["prestamista"] },
   { to: "/prestamos", label: "Préstamos", icon: "▤", roles: ["prestamista"] },
   { to: "/pagos", label: "Pagos", icon: "◫", roles: ["prestamista"] },
   { to: "/comparador", label: "Comparador", icon: "⇄", roles: ["prestamista"] },
-  { to: "/rutas", label: "Rutas de cobro", icon: "◈", roles: ["cobrador"] },
+  {
+    to: "/rutas",
+    label: "Rutas de cobro",
+    icon: "◈",
+    roles: ["prestamista", "cobrador"],
+  },
   { to: "/auditoria", label: "Auditoría", icon: "◉", roles: ["admin"] },
   { to: "/configuracion", label: "Configuración", icon: "⚙", roles: ["admin"] },
 ];
@@ -35,8 +39,8 @@ export function AppLayout() {
   const navigate = useNavigate();
 
   const handleLogout = async () => {
+    navigate("/login", { replace: true, state: null });
     await logout();
-    navigate("/login", { replace: true });
   };
 
   const visibleItems = NAV_ITEMS.filter((item) => {

@@ -134,15 +134,25 @@ def _build_fixed_payment(terms: LoanTerms, start: date) -> list[Installment]:
 
     for number in range(1, terms.periods + 1):
         if number == terms.periods:
-            # RN-03: la ultima cuota cierra el saldo exactamente y ajusta el
-            # interes para que el total coincida con la formula.
+            # RN-03: la ultima cuota cierra el saldo exactamente. Si el ajuste
+            # contra la formula teorica produjera interes negativo por redondeo
+            # acumulado, se usa el interes real sobre el saldo restante.
             principal_part = balance
-            interest_part = round_money(total_interest(terms) - _sum_interest(rows))
+            adjusted_interest = round_money(total_interest(terms) - _sum_interest(rows))
+            interest_part = (
+                declining_interest(terms, balance)
+                if adjusted_interest < Decimal("0.00")
+                else adjusted_interest
+            )
             amount = round_money(principal_part + interest_part)
         else:
             interest_part = declining_interest(terms, balance)
             principal_part = round_money(payment - interest_part)
-            amount = payment
+            if principal_part > balance:
+                principal_part = balance
+            elif principal_part < Decimal("0.00"):
+                principal_part = Decimal("0.00")
+            amount = round_money(principal_part + interest_part)
 
         balance = round_money(balance - principal_part)
         rows.append(

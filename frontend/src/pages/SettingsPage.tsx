@@ -7,7 +7,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type FormEvent, useEffect, useState } from "react";
+import { type FormEvent, useState } from "react";
 
 import { ROLE_LABELS } from "@/api/auth";
 import { SCHEME_LABELS } from "@/api/loans";
@@ -66,10 +66,10 @@ export function SettingsPage() {
     password: string;
   } | null>(null);
 
-  // --- Estado de parámetros globales ---
-  const [lateFeePercent, setLateFeePercent] = useState("10");
-  const [defaultScheme, setDefaultScheme] = useState<LoanScheme>("simple");
-  const [graceDays, setGraceDays] = useState("0");
+  // --- Estado de parámetros globales (borrador editable sobre el valor del servidor) ---
+  const [lateFeeDraft, setLateFeeDraft] = useState<string | null>(null);
+  const [schemeDraft, setSchemeDraft] = useState<LoanScheme | null>(null);
+  const [graceDaysDraft, setGraceDaysDraft] = useState<string | null>(null);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
@@ -78,14 +78,17 @@ export function SettingsPage() {
     queryFn: getSystemSettings,
   });
 
-  useEffect(() => {
-    if (settingsQuery.data) {
-      const pct = Number(settingsQuery.data.default_late_fee_rate) * 100;
-      setLateFeePercent(pct.toFixed(2).replace(/\.00$/, ""));
-      setDefaultScheme(settingsQuery.data.default_scheme);
-      setGraceDays(String(settingsQuery.data.grace_days));
-    }
-  }, [settingsQuery.data]);
+  const serverLateFee = settingsQuery.data
+    ? (Number(settingsQuery.data.default_late_fee_rate) * 100)
+        .toFixed(2)
+        .replace(/\.00$/, "")
+    : "10";
+  const lateFeePercent = lateFeeDraft ?? serverLateFee;
+  const defaultScheme =
+    schemeDraft ?? settingsQuery.data?.default_scheme ?? "simple";
+  const graceDays =
+    graceDaysDraft ??
+    (settingsQuery.data ? String(settingsQuery.data.grace_days) : "0");
 
   const usersQuery = useQuery({
     queryKey: ["users", { search, roleFilter, statusFilter, page }],
@@ -112,6 +115,9 @@ export function SettingsPage() {
     onSuccess: () => {
       setSettingsError(null);
       setSettingsSaved(true);
+      setLateFeeDraft(null);
+      setSchemeDraft(null);
+      setGraceDaysDraft(null);
       void queryClient.invalidateQueries({ queryKey: ["settings"] });
     },
     onError: (err) => {
@@ -129,7 +135,7 @@ export function SettingsPage() {
         email: email.trim(),
         phone: phone.trim() || null,
         role,
-        permissions: role === "admin" ? {} : permissions,
+        permissions: role === "prestamista" ? permissions : {},
         password: password.trim() || null,
       }),
     onSuccess: (created) => {
@@ -201,8 +207,13 @@ export function SettingsPage() {
       setSettingsError("La tasa moratoria debe estar entre 0 % y 100 %.");
       return;
     }
-    if (Number.isNaN(grace) || grace < 0 || grace > 90) {
-      setSettingsError("Los días de gracia deben estar entre 0 y 90.");
+    if (
+      Number.isNaN(grace) ||
+      !Number.isInteger(grace) ||
+      grace < 0 ||
+      grace > 90
+    ) {
+      setSettingsError("Los días de gracia deben ser un entero entre 0 y 90.");
       return;
     }
     saveSettingsMutation.mutate();
@@ -323,7 +334,7 @@ export function SettingsPage() {
                 max="100"
                 className="input"
                 value={lateFeePercent}
-                onChange={(e) => setLateFeePercent(e.target.value)}
+                onChange={(e) => setLateFeeDraft(e.target.value)}
               />
               {settingsQuery.data && (
                 <p className="mt-1 text-xs text-slate-500">
@@ -341,7 +352,7 @@ export function SettingsPage() {
                 id="default-scheme"
                 className="input"
                 value={defaultScheme}
-                onChange={(e) => setDefaultScheme(e.target.value as LoanScheme)}
+                onChange={(e) => setSchemeDraft(e.target.value as LoanScheme)}
               >
                 {(Object.keys(SCHEME_LABELS) as LoanScheme[]).map((key) => (
                   <option key={key} value={key}>
@@ -362,7 +373,7 @@ export function SettingsPage() {
                 max="90"
                 className="input"
                 value={graceDays}
-                onChange={(e) => setGraceDays(e.target.value)}
+                onChange={(e) => setGraceDaysDraft(e.target.value)}
               />
             </div>
 
@@ -479,7 +490,7 @@ export function SettingsPage() {
               />
             </div>
 
-            {role !== "admin" && (
+            {role === "prestamista" && (
               <div className="sm:col-span-2">
                 <p className="label">Permisos especiales (RF-05)</p>
                 <div className="mt-1 flex flex-wrap gap-4">
@@ -652,6 +663,10 @@ export function SettingsPage() {
                           <span className="text-xs text-slate-500">
                             Acceso total (RN-61)
                           </span>
+                        ) : item.role === "cobrador" ? (
+                          <span className="text-xs text-slate-500">
+                            Solo cobro en ruta (RN-37)
+                          </span>
                         ) : (
                           <div className="flex flex-col gap-1">
                             {EDITABLE_PERMISSIONS.map((perm) => (
@@ -691,16 +706,16 @@ export function SettingsPage() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex justify-end gap-2">
-                          <button
-                            type="button"
-                            className="btn-secondary px-2.5 py-1 text-xs"
-                            disabled={resetPasswordMutation.isPending}
-                            onClick={() => handleResetPassword(item)}
-                          >
-                            Clave temporal
-                          </button>
-                          {!isSelf && (
+                        {!isSelf && (
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              className="btn-secondary px-2.5 py-1 text-xs"
+                              disabled={resetPasswordMutation.isPending}
+                              onClick={() => handleResetPassword(item)}
+                            >
+                              Clave temporal
+                            </button>
                             <button
                               type="button"
                               className="btn-secondary px-2.5 py-1 text-xs"
@@ -709,8 +724,8 @@ export function SettingsPage() {
                             >
                               {item.is_active ? "Desactivar" : "Reactivar"}
                             </button>
-                          )}
-                        </div>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );

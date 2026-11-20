@@ -57,22 +57,29 @@ async def seed_tenant(
     Raises:
         SeedError: Si el slug o el correo ya existen.
     """
+    normalized_email = admin_email.lower().strip()
+    normalized_slug = slug.lower().strip()
+
     if len(admin_password) < 10:
         raise SeedError("La contrasena debe tener al menos 10 caracteres.")
 
-    if "@" not in admin_email or "." not in admin_email.split("@")[-1]:
+    if "@" not in normalized_email or "." not in normalized_email.split("@")[-1]:
         raise SeedError(f"El correo '{admin_email}' no tiene un formato valido.")
 
     async with SessionLocal() as session:
-        existing_tenant = await session.scalar(select(Tenant).where(Tenant.slug == slug))
+        existing_tenant = await session.scalar(
+            select(Tenant).where(Tenant.slug == normalized_slug)
+        )
         if existing_tenant is not None:
-            raise SeedError(f"Ya existe un tenant con el slug '{slug}'.")
+            raise SeedError(f"Ya existe un tenant con el slug '{normalized_slug}'.")
 
-        existing_user = await session.scalar(select(User).where(User.email == admin_email))
+        existing_user = await session.scalar(
+            select(User).where(User.email == normalized_email)
+        )
         if existing_user is not None:
-            raise SeedError(f"Ya existe un usuario con el correo '{admin_email}'.")
+            raise SeedError(f"Ya existe un usuario con el correo '{normalized_email}'.")
 
-        tenant = Tenant(name=name, slug=slug, plan="empresarial")
+        tenant = Tenant(name=name.strip(), slug=normalized_slug, plan="empresarial")
         session.add(tenant)
         await session.flush()
 
@@ -88,8 +95,8 @@ async def seed_tenant(
 
         admin = User(
             tenant_id=tenant.id,
-            full_name=admin_name,
-            email=admin_email,
+            full_name=admin_name.strip(),
+            email=normalized_email,
             password_hash=hash_password(admin_password),
             role="admin",
             permissions={},

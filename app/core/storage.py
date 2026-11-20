@@ -98,6 +98,25 @@ def validate_upload(content: bytes, mime_type: str) -> None:
         )
 
 
+def validate_file_signature(content: bytes, mime_type: str) -> None:
+    """Verifica los magic bytes del archivo contra el tipo MIME declarado."""
+    if mime_type == "application/pdf":
+        valid = content.startswith(b"%PDF-")
+    elif mime_type == "image/jpeg":
+        valid = content.startswith(b"\xff\xd8\xff")
+    elif mime_type == "image/png":
+        valid = content.startswith(b"\x89PNG\r\n\x1a\n")
+    elif mime_type == "image/webp":
+        valid = len(content) >= 12 and content[:4] == b"RIFF" and content[8:12] == b"WEBP"
+    else:
+        valid = False
+
+    if not valid:
+        raise InvalidFileError(
+            "El contenido del archivo no coincide con el tipo declarado."
+        )
+
+
 class LocalStorage:
     """Guarda los archivos en disco, bajo el directorio configurado.
 
@@ -120,11 +139,14 @@ class LocalStorage:
         """Escribe el archivo y devuelve la clave relativa."""
         validate_upload(content, mime_type)
 
+        if "/" in doc_type or "\\" in doc_type or ".." in doc_type:
+            raise StorageError("Tipo de documento no valido para la ruta.")
+
         extension = MIME_EXTENSIONS.get(mime_type, "")
         filename = f"{doc_type}-{uuid4().hex}{extension}"
         key = f"{tenant_id}/{client_id}/{filename}"
 
-        target = self._root / key
+        target = self._safe_path(key)
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)

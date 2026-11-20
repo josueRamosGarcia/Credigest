@@ -16,7 +16,7 @@ from app.models.user import User
 pytestmark = pytest.mark.db
 
 PASSWORD = "clave-segura-123"
-CURP = "LOPJ850312MDFZRN07"
+CURP = "LOPJ850312MDFZRN00"
 
 
 async def _setup_scenario(

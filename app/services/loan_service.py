@@ -20,17 +20,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.domain.amortization import build_schedule
+from app.domain.amortization import build_schedule, schedule_totals
 from app.domain.interest import (
     Frequency,
     LoanTerms,
     Scheme,
     first_installment,
-    total_amount,
-    total_interest,
 )
 from app.domain.money import round_money
 from app.models.client import Client
+from app.models.collection_route import CollectionRoute, CollectionRouteItem
 from app.models.loan import Installment, Loan
 from app.models.system_setting import SystemSetting
 from app.schemas.loan import LoanCreate
@@ -180,6 +179,7 @@ async def create_loan(
         grace_days = settings.grace_days if settings else 0
 
     schedule = build_schedule(terms, payload.start_date)
+    sched_total_amount, sched_total_interest, _ = schedule_totals(schedule)
 
     loan = Loan(
         tenant_id=tenant_id,
@@ -193,8 +193,8 @@ async def create_loan(
         start_date=payload.start_date,
         first_due_date=schedule[0].due_date,
         end_date=schedule[-1].due_date,
-        total_interest=total_interest(terms),
-        total_amount=total_amount(terms),
+        total_interest=sched_total_interest,
+        total_amount=sched_total_amount,
         late_fee_rate=late_fee_rate,
         grace_days=grace_days,
         status="activo",
@@ -247,6 +247,7 @@ async def list_loans(
     *,
     status: str | None = None,
     client_id: UUID | None = None,
+    cobrador_id: UUID | None = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[Sequence[Loan], int]:
@@ -259,6 +260,16 @@ async def list_loans(
         conditions.append(Loan.status == status)
     if client_id:
         conditions.append(Loan.client_id == client_id)
+    if cobrador_id is not None:
+        assigned_loans = (
+            select(CollectionRouteItem.loan_id)
+            .join(CollectionRoute, CollectionRoute.id == CollectionRouteItem.route_id)
+            .where(
+                CollectionRoute.tenant_id == tenant_id,
+                CollectionRoute.cobrador_id == cobrador_id,
+            )
+        )
+        conditions.append(Loan.id.in_(assigned_loans))
 
     total = await session.scalar(select(func.count()).select_from(Loan).where(*conditions))
 

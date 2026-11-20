@@ -12,10 +12,14 @@ Reglas que se reflejan aqui:
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+
+#: Frecuencias y esquemas permitidos en la API.
+RatePeriodLiteral = Literal["semanal", "quincenal", "mensual"]
+LoanSchemeLiteral = Literal["simple", "saldo_insoluto", "cuota_fija"]
 
 #: Importe monetario con 2 decimales.
 #: Se serializa como cadena ("1333.33") para no perder precision: JavaScript
@@ -27,11 +31,26 @@ Money = Annotated[
     PlainSerializer(lambda value: f"{value:.2f}", return_type=str, when_used="json"),
 ]
 
-#: Tasa con 4 decimales por periodo.
+#: Tasa de entrada con 4 decimales por periodo.
 Rate = Annotated[
     Decimal,
     Field(max_digits=8, decimal_places=4, ge=0),
     PlainSerializer(lambda value: f"{value:.4f}", return_type=str, when_used="json"),
+]
+
+#: Tasa informativa de salida (como la tasa anual equivalente): sin tope de
+#: 8 digitos porque tasas semanales altas crecen exponencialmente al anualizar.
+RateOutput = Annotated[
+    Decimal,
+    Field(ge=0),
+    PlainSerializer(lambda value: f"{value:.4f}", return_type=str, when_used="json"),
+]
+
+#: Porcentaje informativo de salida (ej. CAT estimado) sin tope de 14 digitos.
+PercentOutput = Annotated[
+    Decimal,
+    Field(ge=0),
+    PlainSerializer(lambda value: f"{value:.2f}", return_type=str, when_used="json"),
 ]
 
 
@@ -52,7 +71,9 @@ class SimulateRequest(BaseModel):
     )
 
     principal: Money = Field(gt=0, description="Monto prestado.")
-    interest_rate: Rate = Field(description="Tasa de interes por periodo, como fraccion.")
+    interest_rate: Rate = Field(
+        le=Decimal("5"), description="Tasa de interes por periodo, como fraccion."
+    )
     rate_period: str = Field(description="Frecuencia: semanal, quincenal o mensual.")
     scheme: str = Field(description="Esquema: simple, saldo_insoluto o cuota_fija.")
     term_periods: int = Field(gt=0, le=520, description="Numero de cuotas.")
@@ -99,7 +120,7 @@ class SimulateResponse(BaseModel):
     total_amount: Money
     estimated_profit: Money
     end_date: date
-    annual_equivalent_rate: Rate
+    annual_equivalent_rate: RateOutput
     schedule: list[ScheduleRow]
 
 
@@ -128,14 +149,16 @@ class LoanCreate(BaseModel):
 
     client_id: UUID = Field(description="Cliente que recibe el prestamo.")
     principal: Money = Field(gt=0, description="Monto prestado.")
-    interest_rate: Rate = Field(description="Tasa de interes por periodo.")
-    rate_period: str = Field(description="Frecuencia: semanal, quincenal o mensual.")
-    scheme: str = Field(description="Esquema: simple, saldo_insoluto o cuota_fija.")
+    interest_rate: Rate = Field(le=Decimal("5"), description="Tasa de interes por periodo.")
+    rate_period: RatePeriodLiteral = Field(description="Frecuencia: semanal, quincenal o mensual.")
+    scheme: LoanSchemeLiteral = Field(description="Esquema: simple, saldo_insoluto o cuota_fija.")
     term_periods: int = Field(gt=0, le=520, description="Numero de cuotas.")
     start_date: date = Field(description="Fecha en que inicia el prestamo.")
 
     #: Si se omiten, se toman de la configuracion global del tenant (RN-22).
-    late_fee_rate: Rate | None = Field(default=None, description="Tasa moratoria mensual.")
+    late_fee_rate: Rate | None = Field(
+        default=None, le=Decimal("5"), description="Tasa moratoria mensual."
+    )
     grace_days: int | None = Field(default=None, ge=0, le=90, description="Dias de gracia.")
 
 

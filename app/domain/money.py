@@ -46,11 +46,16 @@ def to_decimal(value: Decimal | int | str, field: str = "importe") -> Decimal:
             "para evitar errores de redondeo."
         )
     if isinstance(value, Decimal):
-        return value
-    try:
-        return Decimal(value)
-    except (InvalidOperation, TypeError, ValueError) as exc:
-        raise MoneyError(f"El campo '{field}' no es un numero valido: {value!r}.") from exc
+        result = value
+    else:
+        try:
+            result = Decimal(value)
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise MoneyError(f"El campo '{field}' no es un numero valido: {value!r}.") from exc
+
+    if not result.is_finite():
+        raise MoneyError(f"El campo '{field}' debe ser un numero finito.")
+    return result
 
 
 def round_money(value: Decimal) -> Decimal:

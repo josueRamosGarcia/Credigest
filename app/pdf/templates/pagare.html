@@ -190,7 +190,7 @@
 <div class="subtitle">Documento de obligación de pago</div>
 
 <div class="amount">
-  {{ loan.total_amount_words }} M.N.
+  {{ loan.total_amount_words }}
   <br />
   <span style="font-size: 12pt;">$ {{ loan.total_amount }}</span>
 </div>
@@ -294,7 +294,7 @@
     <li>
       El deudor se obliga a pagar a <strong>{{ tenant.name }}</strong> la cantidad total de
       <strong>$ {{ loan.total_amount }}</strong> ({{ loan.total_amount_words }}), en
-      {{ loan.term_periods }} pagos {{ loan.rate_period_label }} de acuerdo con la tabla de
+      {{ loan.term_periods }} pagos {{ loan.rate_period_plural }} de acuerdo con la tabla de
       amortización anterior.
     </li>
     <li>

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import CurrentUserDep, require_role
 from app.core.request_meta import request_meta
 from app.db.session import get_session
-from app.domain.amortization import build_schedule
+from app.domain.amortization import build_schedule, schedule_totals
 from app.domain.interest import (
     Frequency,
     LoanTerms,
@@ -23,8 +23,6 @@ from app.domain.interest import (
     due_date,
     first_installment,
     last_installment,
-    total_amount,
-    total_interest,
 )
 from app.models.client import Client
 from app.pdf.generator import (
@@ -116,14 +114,14 @@ async def simulate(payload: SimulateRequest) -> SimulateResponse:
     )
 
     schedule = build_schedule(terms, payload.start_date)
-    interest = total_interest(terms)
+    sched_total_amount, sched_total_interest, _ = schedule_totals(schedule)
 
     return SimulateResponse(
         installment_amount=first_installment(terms),
         installment_amount_last=last_installment(terms),
-        total_interest=interest,
-        total_amount=total_amount(terms),
-        estimated_profit=interest,
+        total_interest=sched_total_interest,
+        total_amount=sched_total_amount,
+        estimated_profit=sched_total_interest,
         end_date=due_date(payload.start_date, terms.frequency, terms.periods),
         annual_equivalent_rate=annual_equivalent_rate(terms.rate, terms.frequency),
         schedule=[
@@ -163,6 +161,7 @@ async def list_loans(
         context.tenant_id,
         status=loan_status,
         client_id=client_id,
+        cobrador_id=context.user.id if context.role == "cobrador" else None,
         page=page,
         page_size=page_size,
     )
@@ -325,6 +324,7 @@ async def download_pagare(
     loan_id: UUID,
     context: CurrentUserDep,
     session: SessionDep,
+    request: Request,
 ) -> Response:
     """Devuelve el pagaré listo para imprimir.
 
@@ -336,6 +336,16 @@ async def download_pagare(
         loan = await loan_service.get_loan(session, context.tenant_id, loan_id)
     except loan_service.LoanNotFoundError as exc:
         raise _not_found(str(exc)) from exc
+
+    if context.role == "cobrador":
+        assigned = await payment_service.is_collector_assigned(
+            session, context.tenant_id, context.user.id, loan.id, loan.client_id
+        )
+        if not assigned:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes acceso a prestamos fuera de tus rutas asignadas.",
+            )
 
     client = await session.scalar(select(Client).where(Client.id == loan.client_id))
     if client is None:
@@ -359,6 +369,7 @@ async def download_pagare(
             detail=str(exc),
         ) from exc
 
+    meta = request_meta(request)
     await audit_service.record(
         session,
         tenant_id=context.tenant_id,
@@ -367,6 +378,8 @@ async def download_pagare(
         entity="loan",
         entity_id=loan.id,
         after={"folio": pdf_context.loan["folio"]},
+        ip_address=meta.ip_address,
+        user_agent=meta.user_agent,
         commit=True,
     )
 

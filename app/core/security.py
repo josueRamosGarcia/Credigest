@@ -20,6 +20,10 @@ BCRYPT_ROUNDS = 12
 #: Longitud minima aceptada para una contrasena nueva.
 MIN_PASSWORD_LENGTH = 10
 
+#: Hash bcrypt valido (coste 12) usado para igualar el tiempo de respuesta cuando
+#: el usuario o cliente no existe, evitando ataques de temporizacion.
+DUMMY_PASSWORD_HASH = "$2b$12$tvZVXla70PZfrPn6.azSqOV0zr5VuU1xkNbuIYLmAo2y7vxXDZ3XW"
+
 
 class PasswordError(ValueError):
     """Error de validacion de contrasena."""

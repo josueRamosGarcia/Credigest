@@ -134,13 +134,18 @@ class TestTenantIsolation:
     async def test_inactive_tenant_is_rejected(
         self, api_client: AsyncClient, db_session: AsyncSession
     ) -> None:
-        await _make_user(db_session, email="b@test.mx", role="admin", tenant_active=False)
+        user, tenant = await _make_user(
+            db_session, email="b@test.mx", role="admin", tenant_active=False
+        )
 
+        # El login debe rechazar una financiera desactivada.
         login = await api_client.post(
             "/api/v1/auth/login", json={"email": "b@test.mx", "password": PASSWORD}
         )
-        token = login.json()["access_token"]
+        assert login.status_code == 401
 
+        # Incluso con un token previamente emitido, get_current_user devuelve 403.
+        token, _, _ = create_access_token(user.id, tenant.id, user.role)
         response = await api_client.get(
             "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
         )

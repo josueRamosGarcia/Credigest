@@ -24,6 +24,7 @@ from app.models.client import Client
 from app.models.loan import Loan
 from app.models.tenant import Tenant
 from app.pdf.amount_words import amount_to_words
+from app.services.payment_service import business_today
 
 #: Ruta de las plantillas HTML.
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -33,6 +34,13 @@ FREQUENCY_LABELS = {
     "semanal": "semanal",
     "quincenal": "quincenal",
     "mensual": "mensual",
+}
+
+#: Etiquetas en plural para clausulas ("12 pagos semanales").
+FREQUENCY_PLURAL_LABELS = {
+    "semanal": "semanales",
+    "quincenal": "quincenales",
+    "mensual": "mensuales",
 }
 
 #: Etiquetas legibles de los esquemas de calculo.
@@ -154,6 +162,7 @@ def build_context(
             "total_interest": _format_money(total_interest),
             "interest_rate_percent": _format_percent(loan.interest_rate),
             "rate_period_label": FREQUENCY_LABELS.get(frequency, frequency),
+            "rate_period_plural": FREQUENCY_PLURAL_LABELS.get(frequency, frequency),
             "installment_label": "pagos",
             "scheme_label": SCHEME_LABELS.get(loan.scheme, loan.scheme),
             "term_periods": loan.term_periods,
@@ -169,7 +178,7 @@ def build_context(
             "interest": _format_money(total_interest),
             "principal": _format_money(total_principal),
         },
-        issued_date=(issued_date or date.today()).strftime("%d/%m/%Y"),
+        issued_date=(issued_date or business_today()).strftime("%d/%m/%Y"),
     )
 
 

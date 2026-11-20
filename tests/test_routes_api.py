@@ -20,8 +20,8 @@ from app.services import route_service
 pytestmark = pytest.mark.db
 
 PASSWORD = "clave-segura-123"
-CURP = "LOPJ850312MDFZRN07"
-CURP_2 = "GALJ900715HJCMPR06"
+CURP = "LOPJ850312MDFZRN00"
+CURP_2 = "GALJ900715HJCMPR04"
 
 
 async def _setup(

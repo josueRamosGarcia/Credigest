@@ -6,7 +6,7 @@ porque es lo que da certeza al documento legal en Mexico.
 
 from decimal import Decimal
 
-from app.domain.money import round_money, to_decimal
+from app.domain.money import MoneyError, round_money, to_decimal
 
 UNITS = (
     "cero",
@@ -92,6 +92,21 @@ def _hundreds_to_words(value: int) -> str:
     return f"{prefix} {_hundreds_to_words(remainder)}"
 
 
+def _apocope(words: str) -> str:
+    """Aplica apocope antes de sustantivo masculino (peso/mil/millon).
+
+    Ejemplos: 'uno' -> 'un', 'veintiuno' -> 'veintiún',
+    'treinta y uno' -> 'treinta y un'.
+    """
+    if words == "uno":
+        return "un"
+    if words.endswith("veintiuno"):
+        return f"{words[:-len('veintiuno')]}veintiún"
+    if words.endswith(" uno"):
+        return f"{words[:-4]} un"
+    return words
+
+
 def _thousands_to_words(value: int) -> str:
     """Convierte un numero de 0 a 999,999 a palabras."""
     if value == 0:
@@ -103,7 +118,7 @@ def _thousands_to_words(value: int) -> str:
     thousands = value // 1000
     remainder = value % 1000
 
-    prefix = "mil" if thousands == 1 else f"{_hundreds_to_words(thousands)} mil"
+    prefix = "mil" if thousands == 1 else f"{_apocope(_hundreds_to_words(thousands))} mil"
 
     if remainder == 0:
         return prefix
@@ -111,14 +126,21 @@ def _thousands_to_words(value: int) -> str:
 
 
 def _millions_to_words(value: int) -> str:
-    """Convierte un numero de 0 a 999,999,999 a palabras."""
+    """Convierte un numero de 0 a 999,999,999,999 a palabras."""
+    if value >= 1_000_000_000_000:
+        raise MoneyError("El importe excede el limite soportado para convertir a letra.")
+
     if value < 1_000_000:
         return _thousands_to_words(value)
 
     millions = value // 1_000_000
     remainder = value % 1_000_000
 
-    prefix = "un millón" if millions == 1 else f"{_thousands_to_words(millions)} millones"
+    prefix = (
+        "un millón"
+        if millions == 1
+        else f"{_apocope(_thousands_to_words(millions))} millones"
+    )
 
     if remainder == 0:
         return prefix
@@ -145,8 +167,13 @@ def amount_to_words(value: Decimal | int | str) -> str:
     integer_part = int(amount)
     cents = int((amount - integer_part) * 100)
 
-    words = _millions_to_words(integer_part)
-    unit = "peso" if integer_part == 1 else "pesos"
+    words = _apocope(_millions_to_words(integer_part))
+    if integer_part == 1:
+        unit = "peso"
+    elif integer_part >= 1_000_000 and integer_part % 1_000_000 == 0:
+        unit = "de pesos"
+    else:
+        unit = "pesos"
     result = f"{words} {unit}"
 
     if cents > 0:

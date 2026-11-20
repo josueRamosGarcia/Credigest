@@ -12,9 +12,10 @@ Reglas que aplican:
 """
 
 from datetime import date
+from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import Date, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Date, Enum, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -44,6 +45,18 @@ class Client(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     phone: Mapped[str] = mapped_column(String(20), nullable=False)
     address: Mapped[str] = mapped_column(Text, nullable=False)
+
+    #: Campos estructurados del domicilio (ciudad/estado por defecto Torreon, Coahuila en UI).
+    street: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    exterior_number: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    neighborhood: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    postal_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    state: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+    #: Coordenadas geograficas para ubicar al cliente en el mapa de rutas.
+    latitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
+    longitude: Mapped[Decimal | None] = mapped_column(Numeric(9, 6), nullable=True)
 
     #: Zona usada para armar las rutas de cobro.
     zone: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)

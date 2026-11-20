@@ -17,8 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.config import get_settings
-from app.core.security import verify_password
+from app.core.security import DUMMY_PASSWORD_HASH, verify_password
 from app.domain.money import round_money
+from app.domain.validation import CurpError, normalize_curp
 from app.models.client import Client
 from app.models.loan import Loan
 from app.models.payment import Payment
@@ -30,6 +31,7 @@ from app.schemas.portal import (
     PortalOverviewResponse,
     PortalPaymentRead,
 )
+from app.services.payment_service import business_today
 
 PORTAL_TOKEN_MINUTES = 60
 
@@ -95,11 +97,17 @@ async def authenticate_client(
     tenant_slug: str | None = None,
 ) -> tuple[Client, Tenant]:
     """Valida CURP y PIN de 6 digitos del cliente."""
+    try:
+        normalized_curp = normalize_curp(curp)
+    except CurpError as exc:
+        verify_password(pin, DUMMY_PASSWORD_HASH)
+        raise PortalAuthError("CURP o PIN incorrectos.") from exc
+
     stmt = (
         select(Client, Tenant)
         .join(Tenant, Tenant.id == Client.tenant_id)
         .where(
-            Client.curp == curp.upper().strip(),
+            Client.curp == normalized_curp,
             Tenant.is_active.is_(True),
         )
     )
@@ -109,7 +117,7 @@ async def authenticate_client(
     rows = (await session.execute(stmt)).all()
 
     if not rows:
-        verify_password(pin, "$2b$12$" + "x" * 53)
+        verify_password(pin, DUMMY_PASSWORD_HASH)
         raise PortalAuthError("CURP o PIN incorrectos.")
 
     if len(rows) > 1 and not tenant_slug:
@@ -142,13 +150,18 @@ async def get_portal_overview(
     today: date | None = None,
 ) -> PortalOverviewResponse:
     """Construye el estado de cuenta completo del cliente con sus prestamos y pagos."""
-    reference_today = today or date.today()
+    reference_today = today or business_today()
 
     client = await session.scalar(
         select(Client).where(Client.id == client_id, Client.tenant_id == tenant_id)
     )
     tenant = await session.scalar(select(Tenant).where(Tenant.id == tenant_id))
-    if client is None or tenant is None or not tenant.is_active:
+    if (
+        client is None
+        or client.status != "activo"
+        or tenant is None
+        or not tenant.is_active
+    ):
         raise PortalAuthError("El perfil del cliente ya no esta disponible.")
 
     loans = (

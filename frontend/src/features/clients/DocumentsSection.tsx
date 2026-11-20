@@ -14,13 +14,13 @@ import {
   listDocuments,
   type ClientDocument,
 } from "@/api/clients";
-import { tokens, ApiError } from "@/api/client";
+import { ApiError, authorizedFetch } from "@/api/client";
 import { openDocument } from "./documentActions";
 import { Alert, EmptyState, Spinner } from "@/components/ui";
 
 const DOC_TYPES = ["ine", "comprobante_domicilio", "otro"] as const;
 
-/** Sube un archivo usando `fetch` directo porque necesita FormData. */
+/** Sube un archivo con FormData respetando el refresh de token. */
 async function uploadDocument(
   clientId: string,
   file: File,
@@ -30,9 +30,8 @@ async function uploadDocument(
   form.append("file", file);
   form.append("doc_type", docType);
 
-  const response = await fetch(`/api/v1/clients/${clientId}/documents`, {
+  const response = await authorizedFetch(`/clients/${clientId}/documents`, {
     method: "POST",
-    headers: tokens.access ? { Authorization: `Bearer ${tokens.access}` } : {},
     body: form,
   });
 
@@ -50,14 +49,11 @@ async function uploadDocument(
   return (await response.json()) as ClientDocument;
 }
 
-/** Elimina un documento. */
+/** Elimina un documento respetando el refresh de token. */
 async function deleteDocument(clientId: string, documentId: string): Promise<void> {
-  const response = await fetch(
-    `/api/v1/clients/${clientId}/documents/${documentId}`,
-    {
-      method: "DELETE",
-      headers: tokens.access ? { Authorization: `Bearer ${tokens.access}` } : {},
-    },
+  const response = await authorizedFetch(
+    `/clients/${clientId}/documents/${documentId}`,
+    { method: "DELETE" },
   );
 
   if (!response.ok) {
@@ -92,9 +88,22 @@ export function DocumentsSection({ clientId }: { clientId: string }) {
   const remove = useMutation({
     mutationFn: (documentId: string) => deleteDocument(clientId, documentId),
     onSuccess: () => {
+      setError(null);
       queryClient.invalidateQueries({ queryKey: ["clients", clientId, "documents"] });
     },
+    onError: (exc: unknown) => {
+      setError(exc instanceof Error ? exc.message : "No se pudo eliminar el documento.");
+    },
   });
+
+  const handleOpen = async (documentId: string) => {
+    setError(null);
+    try {
+      await openDocument(clientId, documentId);
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : "No se pudo abrir el documento.");
+    }
+  };
 
   const handleFile = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -187,7 +196,7 @@ export function DocumentsSection({ clientId }: { clientId: string }) {
                 <button
                   type="button"
                   className="btn-secondary px-3 py-1 text-xs"
-                  onClick={() => openDocument(clientId, document.id)}
+                  onClick={() => void handleOpen(document.id)}
                 >
                   Abrir
                 </button>

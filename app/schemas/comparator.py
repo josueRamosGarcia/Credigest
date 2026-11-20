@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.schemas.loan import Money, Rate
+from app.schemas.loan import Money, PercentOutput, Rate, RateOutput
 
 RatePeriodLiteral = Literal["semanal", "quincenal", "mensual"]
 LoanSchemeLiteral = Literal["simple", "saldo_insoluto", "cuota_fija"]
@@ -68,7 +68,7 @@ class CompareRequest(BaseModel):
     """Condiciones propias a comparar contra el catalogo bancario (CU-09)."""
 
     principal: Money = Field(gt=0, description="Monto del prestamo.")
-    interest_rate: Rate = Field(ge=0, description="Tasa propia por periodo.")
+    interest_rate: Rate = Field(ge=0, le=Decimal("5"), description="Tasa propia por periodo.")
     rate_period: RatePeriodLiteral
     scheme: LoanSchemeLiteral = "simple"
     term_periods: Annotated[int, Field(ge=1, le=520)]
@@ -85,8 +85,8 @@ class CompareRowRead(BaseModel):
     institution: str
     is_own_offer: bool
     periodic_rate: Rate
-    annual_rate: Rate
-    estimated_cat: Money
+    annual_rate: RateOutput
+    estimated_cat: PercentOutput
     installment_amount: Money
     total_interest: Money
     opening_fee: Money

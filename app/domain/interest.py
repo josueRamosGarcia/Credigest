@@ -200,8 +200,8 @@ def last_installment(terms: LoanTerms) -> Decimal:
         return first_installment(terms)
 
     capital = declining_principal_part(terms)
-    remaining = terms.principal - capital * (terms.periods - 1)
-    return capital + declining_interest(terms, remaining)
+    remaining = round_money(terms.principal - capital * (terms.periods - 1))
+    return round_money(remaining + declining_interest(terms, remaining))
 
 
 def total_interest(terms: LoanTerms) -> Decimal:

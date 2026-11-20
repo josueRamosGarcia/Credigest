@@ -22,9 +22,11 @@ import {
   getWhatsappLink,
   listPayments,
 } from "@/api/payments";
+import { useAuth } from "@/auth/useAuth";
 import { CancelPaymentForm } from "@/features/payments/CancelPaymentForm";
 import { PaymentForm } from "@/features/payments/PaymentForm";
 import {
+  Alert,
   Badge,
   Card,
   EmptyState,
@@ -36,11 +38,13 @@ import { formatCurrency, formatDate, formatDateTime, formatRate } from "@/lib/fo
 
 export function LoanDetailPage() {
   const { id = "" } = useParams();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [showPayment, setShowPayment] = useState(false);
   const [showCancel, setShowCancel] = useState(false);
   const [cancelReason, setCancelReason] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [cancellingPayment, setCancellingPayment] = useState<string | null>(null);
 
   const loan = useQuery({
@@ -80,15 +84,57 @@ export function LoanDetailPage() {
   }
 
   const data = loan.data;
+  const isAdmin = user?.role === "admin";
+  const canCancelPayment =
+    isAdmin ||
+    (user?.role === "prestamista" && Boolean(user.permissions.cancel_payment));
   const canPay = data.status === "activo" || data.status === "vencido";
-  const canCancel = canPay;
+  const canCancel = canPay && isAdmin;
+
+  const latestAppliedId =
+    payments.data?.items.find((payment) => payment.status === "aplicado")?.id ??
+    null;
 
   const handleDownload = async () => {
     setDownloading(true);
+    setActionError(null);
     try {
       await downloadPagare(data.id);
+    } catch (exc) {
+      setActionError(
+        exc instanceof Error
+          ? exc.message
+          : "No se pudo descargar el pagaré.",
+      );
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const handleDownloadReceipt = async (paymentId: string, folio: string) => {
+    setActionError(null);
+    try {
+      await downloadReceipt(paymentId, folio);
+    } catch (exc) {
+      setActionError(
+        exc instanceof Error
+          ? exc.message
+          : "No se pudo descargar el comprobante.",
+      );
+    }
+  };
+
+  const handleWhatsapp = async (paymentId: string) => {
+    setActionError(null);
+    try {
+      const { url } = await getWhatsappLink(paymentId);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (exc) {
+      setActionError(
+        exc instanceof Error
+          ? exc.message
+          : "No se pudo generar el enlace de WhatsApp.",
+      );
     }
   };
 
@@ -141,6 +187,12 @@ export function LoanDetailPage() {
           </>
         }
       />
+
+      {actionError && (
+        <div className="mb-4">
+          <Alert tone="error">{actionError}</Alert>
+        </div>
+      )}
 
       <div className="mb-6 flex flex-wrap items-center gap-3">
         <Badge className={LOAN_STATUS_STYLES[data.status]}>
@@ -301,10 +353,14 @@ export function LoanDetailPage() {
 
         {payments.data && payments.data.items.length > 0 && (
           <ul className="divide-y divide-slate-100">
-            {payments.data.items.map((payment, index) => {
-              // Solo el pago mas reciente y aplicado puede anularse.
+            {payments.data.items.map((payment) => {
+              // Solo el pago aplicado más reciente puede anularse; si el préstamo
+              // ya quedó pagado, solo el administrador puede revertirlo (RN-38).
+              const canCancelOnThisLoan = data.status !== "pagado" || isAdmin;
               const isLatestApplied =
-                index === 0 && payment.status === "aplicado";
+                canCancelPayment &&
+                canCancelOnThisLoan &&
+                payment.id === latestAppliedId;
 
               return (
                 <li key={payment.id} className="py-3">
@@ -334,17 +390,16 @@ export function LoanDetailPage() {
                       <button
                         type="button"
                         className="text-xs text-brand-700 hover:underline"
-                        onClick={() => downloadReceipt(payment.id, payment.folio)}
+                        onClick={() =>
+                          void handleDownloadReceipt(payment.id, payment.folio)
+                        }
                       >
                         PDF
                       </button>
                       <button
                         type="button"
                         className="text-xs text-green-700 hover:underline"
-                        onClick={async () => {
-                          const { url } = await getWhatsappLink(payment.id);
-                          window.open(url, "_blank", "noopener,noreferrer");
-                        }}
+                        onClick={() => void handleWhatsapp(payment.id)}
                       >
                         WhatsApp
                       </button>

@@ -14,15 +14,15 @@ class TestSmallAmounts:
         ("value", "expected"),
         [
             ("0", "cero pesos M.N."),
-            ("1", "uno peso M.N."),
+            ("1", "un peso M.N."),
             ("2", "dos pesos M.N."),
             ("15", "quince pesos M.N."),
             ("16", "dieciséis pesos M.N."),
             ("20", "veinte pesos M.N."),
-            ("21", "veintiuno pesos M.N."),
+            ("21", "veintiún pesos M.N."),
             ("29", "veintinueve pesos M.N."),
             ("30", "treinta pesos M.N."),
-            ("31", "treinta y uno pesos M.N."),
+            ("31", "treinta y un pesos M.N."),
             ("99", "noventa y nueve pesos M.N."),
         ],
     )
@@ -37,7 +37,7 @@ class TestHundreds:
         ("value", "expected"),
         [
             ("100", "cien pesos M.N."),
-            ("101", "ciento uno pesos M.N."),
+            ("101", "ciento un pesos M.N."),
             ("150", "ciento cincuenta pesos M.N."),
             ("200", "doscientos pesos M.N."),
             ("500", "quinientos pesos M.N."),
@@ -56,10 +56,12 @@ class TestThousands:
         ("value", "expected"),
         [
             ("1000", "mil pesos M.N."),
-            ("1001", "mil uno pesos M.N."),
+            ("1001", "mil un pesos M.N."),
             ("2500", "dos mil quinientos pesos M.N."),
             ("10000", "diez mil pesos M.N."),
             ("16000", "dieciséis mil pesos M.N."),
+            ("21000", "veintiún mil pesos M.N."),
+            ("31000", "treinta y un mil pesos M.N."),
             ("100000", "cien mil pesos M.N."),
         ],
     )
@@ -69,8 +71,8 @@ class TestThousands:
     @pytest.mark.parametrize(
         ("value", "expected"),
         [
-            ("1000000", "un millón pesos M.N."),
-            ("2000000", "dos millones pesos M.N."),
+            ("1000000", "un millón de pesos M.N."),
+            ("2000000", "dos millones de pesos M.N."),
             ("5500000", "cinco millones quinientos mil pesos M.N."),
         ],
     )

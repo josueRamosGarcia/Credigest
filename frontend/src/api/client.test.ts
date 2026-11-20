@@ -170,4 +170,32 @@ describe("request", () => {
     await expect(request("/test")).rejects.toBeInstanceOf(ApiError);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("deduplica peticiones 401 concurrentes en un solo refresh", async () => {
+    tokens.save("viejo", "refresco-unico");
+
+    let refreshCalls = 0;
+    const fetchMock = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/auth/refresh")) {
+        refreshCalls += 1;
+        return jsonResponse({ access_token: "nuevo", refresh_token: "r2" });
+      }
+      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization;
+      if (auth === "Bearer viejo") {
+        return jsonResponse({ detail: "expirado" }, 401);
+      }
+      return jsonResponse({ ok: url });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const results = await Promise.all([
+      request<{ ok: string }>("/a"),
+      request<{ ok: string }>("/b"),
+      request<{ ok: string }>("/c"),
+    ]);
+
+    expect(refreshCalls).toBe(1);
+    expect(results.map((r) => r.ok)).toEqual(["/api/v1/a", "/api/v1/b", "/api/v1/c"]);
+    expect(tokens.access).toBe("nuevo");
+  });
 });
