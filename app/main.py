@@ -1,9 +1,12 @@
 """Punto de entrada de la API de Credigest."""
 
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -73,3 +76,25 @@ async def health_db(
             detail="Base de datos no disponible.",
         ) from exc
     return {"status": "ok", "database": "ok"}
+
+
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+
+if (_FRONTEND_DIST / "index.html").is_file():  # pragma: no cover - build de produccion
+    _ASSETS_DIR = _FRONTEND_DIST / "assets"
+    if _ASSETS_DIR.is_dir():
+        app.mount("/assets", StaticFiles(directory=_ASSETS_DIR), name="frontend-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str) -> FileResponse:
+        """Sirve archivos estaticos de la PWA o `index.html` para rutas de React Router."""
+        if full_path.startswith(("api/", "docs", "redoc", "openapi.json", "health")):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+        candidate = (_FRONTEND_DIST / full_path).resolve()
+        if (
+            full_path
+            and candidate.is_file()
+            and _FRONTEND_DIST in candidate.parents
+        ):
+            return FileResponse(candidate)
+        return FileResponse(_FRONTEND_DIST / "index.html")

@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEV_JWT_SECRET = "credigest-desarrollo-cambiar-en-produccion-32b"
@@ -24,6 +24,19 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/credigest"
     timezone: str = "America/Mexico_City"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, value: str) -> str:
+        """Convierte URLs `postgres://` o `postgresql://` (Railway/Render) a `postgresql+asyncpg://`."""
+        if not isinstance(value, str):
+            return value
+        trimmed = value.strip()
+        if trimmed.startswith("postgres://"):
+            return "postgresql+asyncpg://" + trimmed[len("postgres://") :]
+        if trimmed.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + trimmed[len("postgresql://") :]
+        return trimmed
 
     #: Secreto para firmar los JWT. En produccion es obligatorio definirlo por
     #: variable de entorno. Debe tener al menos 32 bytes (RFC 7518 §3.2).
